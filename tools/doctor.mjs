@@ -10,6 +10,7 @@
 //   node tools/doctor.mjs                全量检查
 //   node tools/doctor.mjs --no-launch    跳过"Electron 能否启动"探测（CI / 无显示环境）
 //   node tools/doctor.mjs --dir <路径>   指定要做权限检查的目录（默认挂件目录）
+//   node tools/doctor.mjs --fix          发现项目文件缺失时自动 git restore（**只动 git 跟踪的文件**）
 //
 // 退出码：0 = 没有 ✗（警告不失败）；1 = 有 ✗
 import fs from 'node:fs'
@@ -56,7 +57,7 @@ function icaclsLines(dir) {
   if (process.platform !== 'win32') return null
   try {
     // 用 latin1 读原始字节：我们只匹配 ASCII 片段，避开控制台编码问题
-    const buf = execFileSync('icacls', [dir], { encoding: 'buffer', timeout: 15000, windowsHide: true })
+    const buf = execFileSync('icacls', [dir], { encoding: 'buffer', timeout: 15000 })
     return buf.toString('latin1').split(/\r?\n/).map((s) => s.trim()).filter((s) => s.includes('(') && s.includes(')'))
   } catch {
     return null
@@ -122,7 +123,83 @@ function checkDir() {
 }
 
 // ---------------------------------------------------------------------------
-// [3] Electron 二进制与启动能力
+// [3] 关键文件完整性（安全软件隔离检查）
+//     本项目被安全软件的行为检测（PDM）误杀过一次：项目内 3 个关键文件被移除，
+//     连 opencode.exe 也被隔离（详见 README「已知问题：安全软件误报」）。
+//     这里只查"在不在"，缺失就给可直接复制执行的恢复命令；--fix 只跑 git restore。
+// ---------------------------------------------------------------------------
+const TRACKED_KEYS = [
+  ['main.js', '挂件主进程'],
+  ['opencode-plugin/whale-autostart/index.js', 'OpenCode 插件入口（启动时自动拉起挂件）'],
+  ['vendor/dsh-whale-widget/assets/whale-widget.js', '上游前端（本版改过默认字号）'],
+]
+
+function checkIntegrity() {
+  console.log('\n[3] 关键文件（安全软件隔离检查）')
+  const missing = []
+
+  // ① 项目内、git 跟踪的关键文件 —— 缺了可以直接 git restore（这三个就是上次被删的）
+  for (const [rel, why] of TRACKED_KEYS) {
+    if (fs.existsSync(path.join(ROOT, rel))) ok(rel, why)
+    else {
+      missing.push(rel)
+      no(rel + ' 缺失', why, 'npm run doctor -- --fix   （就是 git restore，只动 git 跟踪的文件）')
+    }
+  }
+
+  // ② Electron 可执行文件（大、未签名，最容易招行为检测）
+  const exe = electronBinary()
+  if (exe) ok('Electron 可执行文件在位', path.relative(ROOT, exe))
+  else no('Electron 可执行文件缺失', 'node_modules/electron/dist',
+    'npm run ensure:electron   （用本机缓存/镜像补跑安装脚本）')
+
+  // ③ OpenCode 自己的二进制：npm postinstall 用硬链接生成三处指向同一份数据，一损俱损
+  const npmRoot = path.join(process.env.APPDATA || '', 'npm', 'node_modules', '@opencode', 'cli')
+  const ocPaths = [
+    path.join(npmRoot, 'bin', 'opencode.exe'),
+    path.join(npmRoot, 'node_modules', '@opencode', 'cli-windows-x64-baseline', 'bin', 'opencode.exe'),
+  ].filter((p) => p.indexOf('node_modules') !== -1)
+  let hit = 0
+  for (const p of ocPaths) { try { if (fs.existsSync(p)) hit++ } catch { /* ignore */ } }
+  let svcCount = 0
+  try {
+    svcCount = fs.readdirSync(path.join(os.homedir(), '.cache', 'opencode'))
+      .filter((f) => /^opencode-service-.*\.exe$/i.test(f)).length
+  } catch { /* ignore */ }
+
+  if (ocPaths.length && hit === ocPaths.length && svcCount > 0) {
+    ok('OpenCode 可执行文件在位', hit + '/' + ocPaths.length + ' 处硬链接 + .cache 里 ' + svcCount + ' 个 service')
+  } else {
+    no('OpenCode 可执行文件疑似被隔离', '命中 ' + hit + '/' + ocPaths.length + ' 处硬链接、.cache 里 ' + svcCount + ' 个 service',
+      '从安全软件的「隔离区」恢复；或重装 CLI：npm i -g @opencode/cli（它与 npm 缓存里的副本是硬链接，一荣俱荣）')
+  }
+  return missing
+}
+
+// --fix：只恢复"git 跟踪的"关键文件 —— 逐条确认被跟踪才动手，
+// 绝不碰 DLL / 系统目录 / 未跟踪文件（自动改系统状态正是我们要避免的行为）
+function fixMissing(missing) {
+  if (!missing.length) return
+  console.log('\n[--fix] 用 git restore 恢复缺失的项目文件：')
+  for (const rel of missing) {
+    let tracked = false
+    try {
+      execFileSync('git', ['-C', ROOT, 'ls-files', '--error-unmatch', '--', rel], { stdio: 'ignore' })
+      tracked = true
+    } catch { tracked = false }
+    if (!tracked) { hi('跳过（未被 git 跟踪）', rel, '请手动确认这个文件应该从哪里来'); continue }
+    try {
+      execFileSync('git', ['-C', ROOT, 'restore', '--', rel], { stdio: 'inherit' })
+      if (fs.existsSync(path.join(ROOT, rel))) ok('已恢复 ' + rel)
+      else no('恢复后仍不存在 ' + rel)
+    } catch (e) {
+      no('恢复失败 ' + rel, (e && e.message) || '')
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// [4] Electron 二进制与启动能力
 // ---------------------------------------------------------------------------
 function electronBinary() {
   const dist = path.join(ROOT, 'node_modules', 'electron', 'dist')
@@ -136,7 +213,7 @@ function electronBinary() {
 }
 
 function checkElectron() {
-  console.log('\n[3] Electron')
+  console.log('\n[4] Electron')
   if (!fs.existsSync(path.join(ROOT, 'node_modules'))) {
     no('node_modules 不存在', '', '先执行 npm install')
     return
@@ -154,7 +231,7 @@ function checkElectron() {
   ok('Electron 二进制存在' + (ver ? '（版本 ' + ver + '）' : ''), path.relative(ROOT, exe))
 
   if (NO_LAUNCH) { note('已跳过启动探测', process.env.CI ? '(CI 环境)' : '(--no-launch)'); return }
-  const r = spawnSync(exe, ['--version'], { encoding: 'utf8', timeout: 25000, windowsHide: true })
+  const r = spawnSync(exe, ['--version'], { encoding: 'utf8', timeout: 25000 })
   const out = String(r.stdout || '') + String(r.stderr || '')
   const codeUnsigned = typeof r.status === 'number' ? (r.status >>> 0) : 0
   if (r.status === 0 && /v\d+/.test(out)) {
@@ -175,7 +252,7 @@ function checkElectron() {
 // ---------------------------------------------------------------------------
 function checkPort() {
   return new Promise((resolve) => {
-    console.log('\n[4] 本地服务端口')
+    console.log('\n[5] 本地服务端口')
     const s = net.connect({ host: '127.0.0.1', port: PORT })
     const done = (v) => { try { s.destroy() } catch { /* ignore */ } resolve(v) }
     s.setTimeout(1500)
@@ -197,7 +274,7 @@ function checkPort() {
 // [5] 美术素材
 // ---------------------------------------------------------------------------
 function checkAssets() {
-  console.log('\n[5] 美术素材')
+  console.log('\n[6] 美术素材')
   let media = []
   try { media = fs.readdirSync(ASSET_DIR).filter((f) => /\.(png|gif|mp3|wav)$/i.test(f)) } catch { /* ignore */ }
   if (media.length) ok('素材已就位', media.length + ' 个媒体文件')
@@ -208,7 +285,7 @@ function checkAssets() {
 // [6] OpenCode 集成
 // ---------------------------------------------------------------------------
 function checkOpenCode() {
-  console.log('\n[6] OpenCode 集成')
+  console.log('\n[7] OpenCode 集成')
   const cfgDir = process.env.WHALE_OPENCODE_CONFIG_DIR
     || (process.env.XDG_CONFIG_HOME ? path.join(process.env.XDG_CONFIG_HOME, 'opencode') : path.join(os.homedir(), '.config', 'opencode'))
   note('配置目录 ' + cfgDir)
@@ -273,10 +350,12 @@ console.log('挂件目录：' + ROOT)
 
 checkRuntime()
 checkDir()
+const missingKeys = checkIntegrity()
 checkElectron()
 await checkPort()
 checkAssets()
 checkOpenCode()
+if (argv.includes('--fix')) fixMissing(missingKeys)
 
 const fails = results.filter((r) => r.s === 'fail')
 const warns = results.filter((r) => r.s === 'warn')

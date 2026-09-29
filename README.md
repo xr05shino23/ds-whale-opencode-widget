@@ -201,6 +201,8 @@ node scripts/fetch-assets.mjs --force  # 覆盖已存在的素材
 | `WHALE_OPENCODE_URL` | 自动发现 | 直接指定 OpenCode 服务地址（例如 `http://127.0.0.1:49374`），跳过自动发现 |
 | `OPENCODE_BIN` | 自动查找 | 指定 `opencode.exe` 路径（仅在自动发现失败时需要） |
 | `WHALE_DIR` | 自动推导 | 挂件项目根目录（OpenCode 插件用；默认从插件位置上跳两级） |
+| `WHALE_LOG_DIR` | `<项目根>/logs` | 插件拉起挂件时的日志目录（默认写 `logs/widget.log`） |
+| `WHALE_DETACH` | — | 设 `1` 时挂件**脱离父进程**（OpenCode 退出后仍存活；默认不脱离，更"不像木马"） |
 | `WHALE_OPENCODE_CONFIG_DIR` | `~/.config/opencode` | OpenCode 配置目录（`setup:opencode` 登记与 `doctor` 检查用；配置目录不在默认位置时设它） |
 | `WHALE_SKIP_SETUP` | — | 设 `1` 时 `npm install` 不再自动登记 OpenCode 插件、也不补跑 Electron 二进制 |
 | `WHALE_ENSURE_TIMEOUT_MS` | `60000` | 安装期补跑 `electron/install.js` 的时间上限（毫秒） |
@@ -245,6 +247,42 @@ node scripts/fetch-assets.mjs --force  # 覆盖已存在的素材
 | 默认台词字号 | `size: 22`（「好模型…」等会折行） | `size: 15`（不折行） |
 | 随机台词池 | 48 句 | **58 句**（+10） |
 | 素材 | 随包分发 | **不分发**，用脚本自取 |
+
+---
+
+## 🛡️ 已知问题：安全软件误报（请先读这条）
+
+**一句话**：卡巴斯基的**行为检测（PDM）**会把「`opencode.exe` 加载本插件 → 插件拉起未签名的 `electron.exe`」这条链判定为 **`PDM:Trojan.Win32.Generic`**。这是**误报**：`opencode.exe` 的数字签名是有效的，本项目代码也全部开源可审计 —— 卡的是"启动行为长得像木马"，不是文件有毒。
+
+**症状**（2026-09-30 本机实际发生过）：
+
+- `main.js`、`opencode-plugin/whale-autostart/index.js`、`vendor/dsh-whale-widget/assets/whale-widget.js` **凭空消失**
+- 连 `opencode.exe` 一起被隔离（它和 npm 缓存里的副本是**硬链接**，一损俱损）
+- 更严重时：Windows 登录报 **「User Profile Service 服务登录失败，无法加载用户配置文件」**（安全软件回滚时重写了用户注册表配置单元）
+
+**怎么自救**：
+
+```bash
+npm run doctor              # 直接报出哪个文件不见了（第 [3] 节「关键文件」）
+npm run doctor -- --fix     # 自动 git restore 恢复（只动 git 跟踪的文件）
+```
+
+`opencode.exe` 被隔离需要手动处理：安全软件 GUI →「隔离区」→ 恢复；或重装 CLI（`npm i -g @opencode/cli`）。
+
+**建议配置的排除项**（本机已配好；换机器 / 换盘符照做）：
+
+| 类型 | 路径 | 说明 |
+|---|---|---|
+| 排除文件夹 | `<项目目录>\`（例：`E:\大肥鱼插件\`） | 挡项目内文件 |
+| 排除文件夹 | `%APPDATA%\npm\node_modules\@opencode\` | 挡 CLI |
+| 排除文件夹 | `%USERPROFILE%\.cache\opencode\` | 挡那个文件名里带 PID 的 service 二进制 |
+| 受信任程序 | `%APPDATA%\npm\node_modules\@opencode\cli\bin\opencode.exe` | |
+| 受信任程序 | `%USERPROFILE%\.cache\opencode\opencode-service-*.exe` | |
+| 受信任程序 | `<项目目录>\node_modules\electron\dist\electron.exe` | **真正跑挂件、且未签名的那个进程**，最容易漏 |
+
+> ⚠️ 受信任程序条目里**务必勾选「不监控应用程序活动」**（该选项作用于"主机入侵防御 / 漏洞利用防御 / 行为检测 / 修复引擎"）—— 这是挡住 PDM 的关键，不勾等于没加。
+
+**为降低误报，本项目从 v0.1.2 起做的改动**：插件拉起挂件时**不再隐藏窗口**（去掉 `windowsHide`）、子进程输出**落日志**（`logs/widget.log`）、**默认不脱离父进程**（想常驻设 `WHALE_DETACH=1`）。详见 [`CHANGELOG.md`](CHANGELOG.md) 与 [`AGENTS.md`](AGENTS.md)。
 
 ---
 
@@ -407,6 +445,7 @@ tools/doctor.mjs             环境自检（npm run doctor）
 tools/                       自检工具（功能体检 / 密钥扫描 / 探针基座 / 登记脚本自测）
 vendor/dsh-whale-widget/     上游插件（MIT；其中 assets/ 素材不随仓库分发）
 data/                        运行数据（**不入库**）
+logs/                        插件拉起挂件时的日志（**不入库**）
 _private/                    本地私有备份（**不入库**）
 ```
 

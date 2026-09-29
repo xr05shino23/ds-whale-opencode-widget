@@ -125,13 +125,18 @@ git push --tags
 ## 七、发布前的检查清单
 
 - [ ] `npm run scan-secrets` → A 级没有新增（`data/` 已被忽略）
-- [ ] `npm run doctor` → 0 失败
-- [ ] 提交里没有 `data/`、`node_modules/`、美术素材（`*.png/gif/mp3/wav`）
+- [ ] `npm run doctor` → 0 失败（重点看 **[3] 关键文件** 一节：有没有被安全软件删掉的东西）
+- [ ] 提交里没有 `data/`、`logs/`、`node_modules/`、美术素材（`*.png/gif/mp3/wav`）
+- [ ] **安全软件特征自检**（验收硬指标，见 `AGENTS.md`）：
+      `git grep -n windowsHide -- '*.js' '*.mjs' '*.cjs'` → 只应命中 `src/bridge.mjs` 那 1 处（唯一允许的例外）；
+      再确认代码里没有 `shell:startup` / `CurrentVersion` / `schtasks` / `reg add`
 - [ ] 若改了 `vendor/` 里的上游文件 → **同步更新 `NOTICE.md` 的改动清单**
 - [ ] README 里的 clone 地址与仓库名一致
 - [ ] `npm run health` 过一遍（需要挂件在运行）
 - [ ] **动过 Electron 版本 → 必须重跑 `npm run doctor` + `npm run health`**，并把实测版本同步进 README「已知限制」
-- [ ] 改过 `scripts/setup-opencode.mjs` / `opencode-plugin/` → 重跑 `npm run test:setup`
+- [ ] 改过 `scripts/setup-opencode.mjs` / `opencode-plugin/` → 重跑 `npm run test:setup`；并**直接以模块方式跑一次插件**确认启动路径没坏：
+      `node -e "import('file:///.../index.js').then(m=>m.default.setup({}))"` → 应生成 `logs/widget.log`，且里面有
+      `widget launched pid=… detached=false exe=…`
 - [ ] 改过 `scripts/ensure-electron.mjs` → 重跑 `npm run test:electron`
 - [ ] 改过 `src/bridge.mjs` → 重跑 `npm run test:bridge`（并顺手确认长对话下"每轮消耗"还能弹）
 - [ ] 干净克隆验证一遍（见第八节）

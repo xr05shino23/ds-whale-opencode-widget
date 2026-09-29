@@ -160,6 +160,8 @@ git diff --no-index --ignore-cr-at-eol package/assets/whale-widget.js vendor/dsh
 | 插件的**模块级"只启动一次"标志** | 会让"挂件被关掉后重新加载插件"再也拉不起来（ESM 模块缓存）→ 去掉标志，靠 Electron 单实例锁去重 |
 | **素材脚本超时太短** | 最大的素材（2.7MB）从 jsDelivr 下载要 ~36–57 秒 → 超时提到 90 秒并增加备用 CDN |
 | 诊断脚本**不能出声** | 之前用真实窗口做音效验证时没有静音，导致用户听到"无缘无故的结束音" → `tools/probe.mjs` 现在默认 `setAudioMuted(true)` |
+| **安全软件行为检测（PDM）误报** | 卡巴斯基把「`opencode.exe` → 加载本插件 → **隐藏 + 静默 + 脱离父进程**地拉起**未签名的 246MB `electron.exe`**」判定为 `PDM:Trojan.Win32.Generic`：项目内 3 个关键文件被隔离、连 `opencode.exe` 一起被删，回滚时还重写了用户注册表配置单元（下次登录报「User Profile Service 服务登录失败」）。**签名有效、代码开源，是误报**，但那个参数组合确实就是行为检测要抓的特征。→ v0.1.2 起：不传 `windowsHide`、输出落 `logs/widget.log`、默认不 `detached`；新增 `AGENTS.md` 与 `doctor` 的「关键文件」检查（`--fix` 可一键 `git restore`）。详见 README「已知问题：安全软件误报」 |
+| **界面自动化脚本也会进行为链** | 误报的行为链末尾是"该 Electron 进程再去做界面自动化"——就是 `_private/dbg-*.mjs` 那批脚本。→ 在排除项未生效、`electron.exe` 未加入受信任程序之前，不要跑它们（已写进 `AGENTS.md`） |
 | **沙箱目录的 ACL 会让 Electron"秒崩"** | 目录被 `icacls` 显式 `DENY` 掉 `Synchronize`（或带"低完整性级别"标记）时，Electron 启动要 `MapViewOfFile` 内存映射 `snapshot_blob.bin` 会失败 → V8 直接 `EXCEPTION_BREAKPOINT`（退出码 `0x80000003`），连 `main.js` 第一行都执行不到。**三重排除证据**：换 Electron 33 一样崩、两个二进制 SHA256 一致、空 `main.js` 也崩 → 与版本/代码/二进制无关，就是目录权限。→ `npm run doctor` 会对比"全新普通目录"的 ACL 把它抓出来 |
 | **OpenCode 不会加载"仓库里的"插件目录** | 以前只能让用户手工改 `opencode.json`（新用户容易漏、导致不自动拉起）。V2 支持 `~/.config/opencode/plugins/` **自动发现目录** → 改成安装时自动建链接（`scripts/setup-opencode.mjs`），零配置 |
 | **自动登记脚本的三个 bug（自测才发现的）** | ① 配置文件不存在时却去备份它 → `ENOENT`；② 第③层没先创建配置目录 → `ENOENT`；③ 最小文本插入时把"上一行内容"当成缩进 → **把数组里已有的插件条目拼坏**。→ 从此 setup 脚本配了正式自测（`npm run test:setup`，34 项，覆盖三层兜底 + 撤销 + 幂等 + "副本升级成链接" + BOM 处理 + "不碰用户自己的同名目录"）——**不测不敢说"能兜底"** |

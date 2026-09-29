@@ -101,6 +101,10 @@ async function pingUrl(url) {
 }
 
 // 直接执行 opencode.exe（execFile + windowsHide，无 shell、无参数拼接）
+// ⚠️ 这里的 windowsHide 是本仓库【唯一】被允许的一处（见 AGENTS.md）：
+//    挂件主进程是 GUI、没有控制台，不隐藏就会在屏幕上闪一下黑窗。
+//    而且它 spawn 的是**已签名的** opencode.exe、只用来问一次服务地址（结果还会缓存），
+//    与"隐藏 + 静默 + 脱离父进程地拉起未签名大二进制"那种特征组合完全不同。
 function askCliForUrl() {
   return new Promise((resolve) => {
     const exe = findOpencodeExe()

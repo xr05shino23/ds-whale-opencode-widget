@@ -46,7 +46,7 @@ function runWithTimeout(args, ms) {
   return new Promise((resolve) => {
     let child
     try {
-      child = spawn(process.execPath, args, { cwd: ROOT, stdio: 'inherit', windowsHide: true })
+      child = spawn(process.execPath, args, { cwd: ROOT, stdio: 'inherit' })
     } catch (e) {
       return resolve({ ok: false, why: 'spawn failed: ' + (e && e.message) })
     }
