@@ -145,7 +145,8 @@ git push --tags
 - [ ] **登记状态**：`opencode.json` 的 `plugins` 里有指向本仓库的路径 ✓；**不要**有自动发现目录里的目录链接 ✗、也不要在 `cli.json` 里留我们的条目 ✗（`npm run doctor` 会直接告诉你）
 - [ ] 改过 `scripts/ensure-electron.mjs` → 重跑 `npm run test:electron`
 - [ ] 改过 `src/bridge.mjs` → 重跑 `npm run test:bridge`（并顺手确认长对话下"每轮消耗"还能弹）
-- [ ] 干净克隆验证一遍（见第八节）
+- [ ] **桌面快捷方式**：`npm run shortcut` 能创建（自测用 `WHALE_DESKTOP_DIR` 指向临时目录，不碰真桌面）；`npm test` 里的 shortcut 15 项全过；`node scripts/shortcut.mjs --remove` 能删掉
+- [ ] **干净克隆验证**：`npm install` 的 postinstall 会依次做三件事（补二进制 → 登记插件 → 建快捷方式），且**任何一步失败都不阻断安装**（`--soft`）
 
 ---
 

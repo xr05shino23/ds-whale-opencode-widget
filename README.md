@@ -95,6 +95,10 @@ npm start                   # 启动桌面挂件
 
 > 🔧 **装完先跑一次 `npm run doctor`**（环境自检）：它会检查目录权限/沙箱、Electron 二进制、端口、OpenCode 插件登记，并把每个问题连同修复命令一起打出来。比 `npm run health` 更适合"还没跑起来就报错"的情况。
 
+> 🖱️ **安装时会自动在桌面生成「大肥鱼」快捷方式** —— **双击就能启动挂件**（图标就是那只鲸鱼，不需要 OpenCode 在场）✓
+> 什么时候需要它：**OpenCode 服务已经在跑、你只是重开 TUI** 时不会自动拉起（这是 OpenCode 插件模型决定的，见下文「让 OpenCode 启动时自动拉起挂件」）→ 这时双击快捷方式即可 ✓
+> 不想要它？`node scripts/shortcut.mjs --remove`；或安装前设 `WHALE_NO_SHORTCUT=1` ✓
+
 启动后：桌面右下角出现小鲸鱼。**鼠标移到鲸鱼上**它会接收点击，**点击鲸鱼**打开泡泡，**点击泡泡**切到下一屏；**右键/悬停右上角的 ☰** 打开设置菜单（角色、大小、音效、泡泡自定义、资源管理…）；托盘图标可显示/隐藏或退出。
 
 不想开 Electron，只想看页面（浏览器访问 `http://127.0.0.1:38900/`）：
@@ -219,7 +223,8 @@ node scripts/fetch-assets.mjs --force  # 覆盖已存在的素材
 | `WHALE_DIR` | 自动推导 | 挂件项目根目录（OpenCode 插件用；默认从插件位置上跳两级） |
 | `WHALE_LOG_DIR` | `<项目根>/logs` | 插件拉起挂件时的日志目录（默认写 `logs/widget.log`） |
 | `WHALE_DETACH` | 脱离父进程（默认**开**） | 设 `0` 时挂件不脱离父进程。**默认开是有原因的**：OpenCode 会在多个进程里加载插件（服务端 / TUI / 每次 CLI 调用），不脱离父进程的话，**那个进程一退出鱼就被一起带走**，而且不会自动回来（实测踩过）。想换回非 detached 就设 `WHALE_DETACH=0` |
-| `WHALE_NO_AUTOSTART` | — | 设 `1` → 插件**完全不自动拉起**（"安全模式"）。装了卡巴斯基等主防、又不想承担误判风险时用：挂件改由你自己 `npm start` 启动，行为链里就没有"跨进程拉起未签名大二进制"这一步了 |
+| `WHALE_NO_AUTOSTART` | — | 设 `1` → 插件**完全不自动拉起**（"安全模式"）。装了卡巴斯基等主防、又不想承担误判风险时用：挂件改由你自己启动（**双击桌面「大肥鱼」快捷方式**或 `npm start`），行为链里就没有"跨进程拉起未签名大二进制"这一步了 |
+| `WHALE_NO_SHORTCUT` | — | 设 `1` → 安装时**不**创建桌面快捷方式 |
 | `WHALE_OPENCODE_CONFIG_DIR` | `~/.config/opencode` | OpenCode 配置目录（`setup:opencode` 登记与 `doctor` 检查用；配置目录不在默认位置时设它） |
 | `WHALE_SKIP_SETUP` | — | 设 `1` 时 `npm install` 不再自动登记 OpenCode 插件、也不补跑 Electron 二进制 |
 | `WHALE_ENSURE_TIMEOUT_MS` | `60000` | 安装期补跑 `electron/install.js` 的时间上限（毫秒） |
