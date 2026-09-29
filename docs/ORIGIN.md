@@ -46,7 +46,7 @@ src/bridge.mjs               ← 新增：OpenCode 用量桥（轮结束 → 金
 src/server.mjs               ← 新增：不开 Electron 的纯服务模式
 src/placeholder.mjs          ← 新增：素材缺失时的内置占位形象 / 托盘图标
 opencode-plugin/             ← 新增：OpenCode 插件（启动时自动拉起挂件）
-scripts/setup-opencode.mjs   ← 新增：把插件登记进 OpenCode（安装时自动跑，三层兜底）
+scripts/setup-opencode.mjs   ← 新增：把插件登记进 OpenCode（安装时自动跑）
 tools/doctor.mjs             ← 新增：环境自检（目录权限/沙箱、二进制、端口、插件登记）
 tools/                       ← 新增：自检工具（功能体检 / 探针基座 / 密钥与隐私扫描）
 scripts/fetch-assets.mjs     ← 新增：从上游官方源取回美术素材
@@ -70,10 +70,11 @@ OpenCode **不会**自动加载"仓库里的"插件目录，必须把它接进�
 
 | 路线 | 位置 | 特点 |
 |---|---|---|
-| `plugins` 数组 | `opencode.json(c)` 里列路径 | 要改用户的配置文件（JSONC 带注释，改写容易弄坏格式） |
-| **自动发现目录** | `~/.config/opencode/plugins/<插件包目录>/` | **零配置**被加载；只要里层是"带 `package.json` 的插件包目录"即可 |
+| **`plugins` 数组** | `opencode.json(c)` 里列插件路径 | **本版首选**：唯一被实测证明"**全新启动也能加载**"的方式（代价是要改用户的配置文件 —— 我们只做最小文本插入、保留注释与格式、改前备份） |
+| **自动发现目录** | `~/.config/opencode/plugins/<插件包目录>/` | 只作为**兜底**（写不了配置时复制一份过去）：真实目录能被扫到，但副本不随仓库更新 |
 
-本版选**自动发现目录**为主：安装时（`postinstall`）把 `opencode-plugin/whale-autostart` **链接**过去（Windows 用 junction，免管理员；mac/Linux 用 symlink）—— 好处是**改代码立即生效**，不需要复制、也不会和仓库不同步。链接不可用时退化为复制；复制也不行才退化为"最小文本插入 `plugins` 数组"（改前自动备份，保留注释与格式）。
+> ⚠️ **v0.1.1/v0.1.2 曾把"自动发现目录 + 目录链接（junction）"当作首选，结果踩了大坑** ✗：
+> OpenCode 扫那个目录时按**真实目录**判断，**符号链接会被静默跳过** —— 表现是"热重载能加载、**全新启动扫不到**"（用户反馈"重启 OpenCode 后鱼没被拉起"）。v0.1.3 起彻底删除这条路（检测到旧链接会自动清掉）。
 
 实测证据（本机 OpenCode 日志，建链接后**无需重启**即被加载）：
 
@@ -163,8 +164,10 @@ git diff --no-index --ignore-cr-at-eol package/assets/whale-widget.js vendor/dsh
 | **安全软件行为检测（PDM）误报** | 卡巴斯基把「`opencode.exe` → 加载本插件 → **隐藏 + 静默 + 脱离父进程**地拉起**未签名的 246MB `electron.exe`**」判定为 `PDM:Trojan.Win32.Generic`：项目内 3 个关键文件被隔离、连 `opencode.exe` 一起被删，回滚时还重写了用户注册表配置单元（下次登录报「User Profile Service 服务登录失败」）。**签名有效、代码开源，是误报**，但那个参数组合确实就是行为检测要抓的特征。→ v0.1.2 起：不传 `windowsHide`、输出落 `logs/widget.log`、默认不 `detached`；新增 `AGENTS.md` 与 `doctor` 的「关键文件」检查（`--fix` 可一键 `git restore`）。详见 README「已知问题：安全软件误报」 |
 | **界面自动化脚本也会进行为链** | 误报的行为链末尾是"该 Electron 进程再去做界面自动化"——就是 `_private/dbg-*.mjs` 那批脚本。→ 在排除项未生效、`electron.exe` 未加入受信任程序之前，不要跑它们（已写进 `AGENTS.md`） |
 | **沙箱目录的 ACL 会让 Electron"秒崩"** | 目录被 `icacls` 显式 `DENY` 掉 `Synchronize`（或带"低完整性级别"标记）时，Electron 启动要 `MapViewOfFile` 内存映射 `snapshot_blob.bin` 会失败 → V8 直接 `EXCEPTION_BREAKPOINT`（退出码 `0x80000003`），连 `main.js` 第一行都执行不到。**三重排除证据**：换 Electron 33 一样崩、两个二进制 SHA256 一致、空 `main.js` 也崩 → 与版本/代码/二进制无关，就是目录权限。→ `npm run doctor` 会对比"全新普通目录"的 ACL 把它抓出来 |
-| **OpenCode 不会加载"仓库里的"插件目录** | 以前只能让用户手工改 `opencode.json`（新用户容易漏、导致不自动拉起）。V2 支持 `~/.config/opencode/plugins/` **自动发现目录** → 改成安装时自动建链接（`scripts/setup-opencode.mjs`），零配置 |
-| **自动登记脚本的三个 bug（自测才发现的）** | ① 配置文件不存在时却去备份它 → `ENOENT`；② 第③层没先创建配置目录 → `ENOENT`；③ 最小文本插入时把"上一行内容"当成缩进 → **把数组里已有的插件条目拼坏**。→ 从此 setup 脚本配了正式自测（`npm run test:setup`，34 项，覆盖三层兜底 + 撤销 + 幂等 + "副本升级成链接" + BOM 处理 + "不碰用户自己的同名目录"）——**不测不敢说"能兜底"** |
+| **OpenCode 不会加载"仓库里的"插件目录** | 以前只能让用户手工改 `opencode.json`（新用户容易漏、导致不自动拉起）→ 改成安装时自动登记（`scripts/setup-opencode.mjs`） |
+| **用"目录链接（junction）"登记插件 → 全新启动时静默失效** | v0.1.1 曾把"往自动发现目录放 junction"当作首选，理由是不用改用户配置。**但 OpenCode 扫目录按真实目录判断，符号链接会被跳过**：热重载能加载、**全新启动扫不到** → 用户重启 OpenCode 后鱼不出现 ✗。更阴的是我当时**只用热重载验证过**，所以"测过了"✗。→ v0.1.3 改为**以写 `plugins` 数组为首选**，并把旧链接自动清掉；`doctor` 也会对这种状态报警 |
+| **`detached: false` 会让挂件被"任意一个 OpenCode 进程"带走** | 为少一个 PDM 特征把 `detached` 默认改成 `false`，结果 OpenCode 会在**多个进程**里加载插件（服务端/TUI/每次 CLI 调用）→ 挂件成了"某个进程的子进程"，那个进程一退出（例如重启 TUI）鱼就没了，而且服务端上的插件不会因此重新加载 → **没人再拉它** ✗（实测 10 分钟内撞两次）。→ v0.1.3 把默认改回 `detached: true`（`WHALE_DETACH=0` 可关）。教训：**改默认行为前先弄清宿主的生命周期** |
+| **自动登记脚本的三个 bug（自测才发现的）** | ① 配置文件不存在时却去备份它 → `ENOENT`；② 第③层没先创建配置目录 → `ENOENT`；③ 最小文本插入时把"上一行内容"当成缩进 → **把数组里已有的插件条目拼坏**。→ 从此 setup 脚本配了正式自测（`npm run test:setup`，v0.1.3 起为 **42 项**：默认走数组 · 幂等 · 强制复制 · 配置三种起点 · 撤销只摘自己的 · **旧链接迁移** · `--migrate` 清冗余副本 · **不覆盖别人的目录** · BOM 处理 · `--soft` 永不报错）——**不测不敢说"能兜底"** |
 
 ---
 

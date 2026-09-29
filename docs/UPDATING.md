@@ -111,12 +111,14 @@ git push --tags
 | `npm run setup:opencode` | 手动/修复插件登记（幂等）。`--dry-run` 预览 · `--migrate` 清理重复的老条目 · `--remove` 撤销 |
 | `npm run doctor` | 环境自检（含"插件是否已登记"和"二进制在不在"） |
 
-登记策略（三层兜底）：① 在 `~/.config/opencode/plugins/whale-autostart` 建**目录链接** → ② 链接失败则**复制** → ③ 复制失败则**最小文本插入** `opencode.json(c)` 的 `plugins` 数组（改前备份成 `opencode.json.bak-<时间戳>`，保留注释与格式）。
+登记策略（**v0.1.3 起调整过**）：① **写 `opencode.json(c)` 的 `plugins` 数组** —— 唯一被实测证明"**全新启动也能加载**"的方式（最小文本插入、保留注释与格式、改前备份成 `opencode.json.bak-<时间戳>`）→ ② 写不了配置时才**复制**到自动发现目录。
+
+> ⚠️ **绝对不要用"目录链接 / junction"做登记**：OpenCode 扫自动发现目录时按**真实目录**判断，符号链接会被跳过 —— 热重载能加载、**全新启动扫不到**（v0.1.1/v0.1.2 踩过，用户表现为"重启后不拉起"）。脚本现在会自动清掉旧链接，`doctor` 也会对这种状态明确报警。
 
 维护者注意：
 
-- **仓库搬家后链接会失效**（链接存的是绝对路径）→ 在新目录重跑 `npm run setup:opencode`；`doctor` 会先报出来
-- 自测：`npm run test:setup`（34 项，覆盖三层兜底 + 撤销 + 幂等（**含"跑第二遍不许把链接降级成副本"**）+ BOM 处理 + **不碰用户自己的同名目录**；全程用临时配置目录，不动你真实的 OpenCode 配置）
+- **仓库搬家后登记会失效**（`opencode.json` 里存的是绝对路径，复制过去的副本也不会跟着走）→ 在新目录重跑 `npm run setup:opencode`；`doctor` 会先报出来
+- 自测：`npm run test:setup`（**42 项**：默认走数组 · 幂等 · 强制复制 · 配置三种起点（无文件/空对象/JSONC+CRLF+注释）· 撤销只摘自己的 · **旧 junction 迁移（T7）** · `--migrate` 清冗余副本（T9）· **不覆盖别人的目录** · BOM 处理 · `--soft` 永不报错；全程用临时配置目录，不动你真实的 OpenCode 配置）
 - 调试开关：`WHALE_SETUP_FORCE=copy|config` 强制走第②/③层；`WHALE_OPENCODE_CONFIG_DIR=<目录>` 隔离测试 —— **别拿真实配置目录做测试**
 - 不想让 `npm install` 动配置：`WHALE_SKIP_SETUP=1`；CI 环境自动跳过
 
