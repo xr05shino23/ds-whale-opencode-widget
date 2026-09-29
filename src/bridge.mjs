@@ -14,6 +14,15 @@
 //      否则并行跑子代理时，花费会被记到它头上。
 //   ② 开销：用 `session.time.idle`（= 最近一次「变空闲」的时刻）做门控，只在轮结束时
 //      才拉一次消息列表；之前是「会话有更新就拉」，一轮对话里会反复拉全量。
+//
+// 三个坑（都是同一个原因造成的：消息接口【分页】）：
+//   ③ `/api/session/<id>/message` 实测**只返回最近 50 条**（响应里带 cursor.previous/next）。
+//      一轮工具调用多的对话就能产出 50+ 条消息 → 窗口里**看不到 user 消息**了。
+//      于是绝对不能把「没看到 user 消息」当成「这不是用户会话」——否则桥会跳过用户真
+//      正在用的会话、跳到别的旧会话上，从此那一轮再也不弹消耗提示（实测踩到过）。
+//      判定规则：页面被截断（条数 = 上限）时【不下结论、也不缓存否定】。
+//   ④ 同因：窗口里可能**只剩 1 条 idle**，推不出「上一条 idle」。这时用上次观测到的
+//      idle 时刻当作本轮起点，否则金额会把好几轮的消耗加在一起。
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
@@ -28,6 +37,7 @@ const POLL_MS = Number(process.env.WHALE_POLL_MS || 2000)
 const PICK_LIMIT = 6          // 归属筛选最多检查几个候选会话
 const USER_CACHE_TTL = 10 * 60 * 1000  // 「不是用户会话」的判定缓存（子代理会话不会再收到用户消息）
 const MSG_CACHE_TTL = 60 * 1000
+const MESSAGE_PAGE = 50       // 消息接口的页大小（实测值）—— 见上面坑③
 
 function readPassword() {
   try { return JSON.parse(fs.readFileSync(SERVICE_JSON, 'utf8')).password || '' } catch { return '' }
@@ -40,6 +50,7 @@ let seq = 0
 let lastTurn = null
 let lastSessionId = null  // 会话切换时重置基线
 let lastIdleId = null     // 已发布的「轮结束」标记（idle 消息 id）
+let lastIdleTime = 0      // 已观测到的 idle 时刻（页面被截断时用它当本轮起点，见坑④）
 let lastIdleAt = 0        // session.time.idle 门控：没变就不拉消息
 let turnBusy = false
 
@@ -159,6 +170,8 @@ function rememberUserSession(id, hasUser) {
 }
 
 // 这个会话是「用户在用的会话」吗？（子代理会话没有 user 消息 → 不参与记账）
+// ⚠️ 页面被分页截断时【不下结论、也不缓存否定】：长对话里 user 消息早被挤出窗口，
+//    把用户正在用的会话误判成"不是用户的"→ 桥会跳到别的旧会话 → 此后不再弹消耗提示（坑③）。
 async function isUserSession(id) {
   const hit = userSessionCache.get(id)
   if (hit) {
@@ -167,6 +180,7 @@ async function isUserSession(id) {
   }
   try {
     const arr = await fetchMessages(id, false)
+    if (arr.length >= MESSAGE_PAGE) return true   // 截断 → 判不了，先当作可用
     const ok = hasUserMessage(arr)
     rememberUserSession(id, ok)
     return ok
@@ -241,6 +255,32 @@ function sumTokens(msgs) {
   return out
 }
 
+// 纯函数（可单测）：给定「会话消息页」+ 上次状态，判定这一页该怎么处理。
+// action: 'not-user' | 'no-idle' | 'baseline' | 'duplicate' | 'no-cost' | 'publish'
+//   · userKnown=false → 页面被分页截断，"没看到 user 消息"不能作为否定依据（坑③）
+//   · from/to 是本轮消耗的窗口；页面截断导致推不出"上一条 idle"时，用上次观测的 idle 时刻兜底（坑④）
+export function analyzeTurn(arr, state, pageLimit = MESSAGE_PAGE) {
+  const list = Array.isArray(arr) ? arr : []
+  const msgs = list.filter((m) => m && m.time && typeof m.time.created === 'number')
+  const userKnown = list.length < pageLimit
+  if (userKnown && !msgs.some((m) => m.type === 'user')) return { action: 'not-user', userKnown }
+
+  const idles = msgs.filter((m) => m.type === 'idle').sort((a, b) => a.time.created - b.time.created)
+  if (!idles.length) return { action: 'no-idle', userKnown }
+
+  const latest = idles[idles.length - 1]
+  // 首次观测：只记基准，不发布（避免把启动前的老账翻出来）
+  if (state.lastIdleId == null) return { action: 'baseline', latestId: latest.id, latestTime: latest.time.created, userKnown }
+  if (latest.id === state.lastIdleId) return { action: 'duplicate', userKnown }
+
+  const prev = idles[idles.length - 2] || null
+  const from = prev ? prev.time.created : (state.lastIdleTime || 0)
+  const to = latest.time.created
+  const entries = msgs.filter((m) => m.type === 'assistant' && Number(m.cost) && m.time.created > from && m.time.created < to)
+  if (!entries.length) return { action: 'no-cost', latestId: latest.id, latestTime: to, userKnown }
+  return { action: 'publish', latestId: latest.id, latestTime: to, entries, userKnown }
+}
+
 // 轮结束检测：会话消息里最新一条 `idle` 就是「这一轮答完了」。
 // 新 idle 出现 → 把「上一条 idle 之后 ~ 这条 idle 之前」的所有 assistant 消息算作本轮消耗，发布一次。
 async function pollTurn(session) {
@@ -250,6 +290,7 @@ async function pollTurn(session) {
     // 切会话：重置基线，避免把上一会话的 idle 当成本轮的
     lastSessionId = session.id
     lastIdleId = null
+    lastIdleTime = 0
     lastIdleAt = 0
     const dir = (session.location && session.location.directory) || ''
     console.log('[bridge] tracking session ' + session.id.slice(0, 12) + '  agent=' + session.agent + '  dir=' + dir)
@@ -263,47 +304,32 @@ async function pollTurn(session) {
   turnBusy = true
   try {
     const arr = await fetchMessages(session.id, true)
+    const r = analyzeTurn(arr, { lastIdleId, lastIdleTime })
 
-    // ① 归属：只认「含用户消息」的会话（子代理/系统会话不记账）
-    const hasUser = hasUserMessage(arr)
-    rememberUserSession(session.id, hasUser)
-    if (!hasUser) return
+    // ① 归属：只有【页面完整】时才能下"不是用户会话"的结论，且只在这时缓存（坑③）
+    if (r.userKnown) rememberUserSession(session.id, r.action !== 'not-user')
+    if (r.action === 'not-user' || r.action === 'no-idle' || r.action === 'duplicate') return
 
-    const idles = []
-    const assistants = []
-    for (const m of arr) {
-      if (!m || !m.time || typeof m.time.created !== 'number') continue
-      if (m.type === 'idle') idles.push(m)
-      else if (m.type === 'assistant' && Number(m.cost)) assistants.push(m)
+    if (r.action === 'baseline' || r.action === 'no-cost') {
+      lastIdleId = r.latestId
+      lastIdleTime = r.latestTime
+      return
     }
-    if (!idles.length) return
-    idles.sort((a, b) => a.time.created - b.time.created)
-
-    const latest = idles[idles.length - 1]
-    // 首次观测：只记基准，不发布（避免把启动前的老账翻出来）
-    if (lastIdleId === null) { lastIdleId = latest.id; return }
-    if (latest.id === lastIdleId) return
-
-    const prevIdle = idles[idles.length - 2] || null
-    lastIdleId = latest.id
-
-    const from = prevIdle ? prevIdle.time.created : 0
-    const to = latest.time.created
-    const turnCost = assistants.filter((m) => m.time.created > from && m.time.created < to)
-    if (!turnCost.length) return
 
     let usd = 0
-    for (const m of turnCost) usd += Number(m.cost) || 0
+    for (const m of r.entries) usd += Number(m.cost) || 0
 
+    lastIdleId = r.latestId
+    lastIdleTime = r.latestTime
     seq += 1
     lastTurn = {
       turn: seq,
       amount: USD_CNY > 0 ? usd * USD_CNY : usd,
-      tokens: sumTokens(turnCost),
-      calls: turnCost.length,
+      tokens: sumTokens(r.entries),
+      calls: r.entries.length,
       ts: Date.now(),
     }
-    console.log('[bridge] turn', seq, 'session', session.id.slice(0, 12), 'calls', turnCost.length,
+    console.log('[bridge] turn', seq, 'session', session.id.slice(0, 12), 'calls', r.entries.length,
       'cost$', usd.toFixed(6), '-> amount', lastTurn.amount.toFixed(4))
   } catch (err) {
     // 消息接口不可用（旧版 host / 权限变化）：静默跳过，下一轮再试

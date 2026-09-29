@@ -7,6 +7,7 @@
 //   ② **默认隔离 profile**。useIsolatedProfile() 把 userData 指到临时目录，
 //      这样探针里的点击/拖拽/改设置都不会污染用户真实的位置、尺寸和已读 seq。
 import { app, BrowserWindow, screen } from 'electron'
+import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 
@@ -18,8 +19,15 @@ export function muteEverything() {
   try { app.commandLine.appendSwitch('mute-audio') } catch { /* ignore */ }
 }
 
-export function useIsolatedProfile(name) {
-  app.setPath('userData', path.join(os.tmpdir(), 'whale-probe', name))
+export function useIsolatedProfile(name, { fresh = false } = {}) {
+  const dir = path.join(os.tmpdir(), 'whale-probe', name)
+  // fresh：把上次跑剩的 profile 整个删掉重建。
+  // 为什么需要它：profile 里除了 localStorage，还有 Chromium 自己的 Preferences 等状态，
+  // 只清 localStorage（resetProbeState 做的那点事）清不干净 —— 实测出现过"同一个 profile 里
+  // 挂件整体偏移 106px，于是点击/拖拽全失、换个 profile 就全过"的情况。想稳定就每次从零开始。
+  if (fresh) { try { fs.rmSync(dir, { recursive: true, force: true }) } catch { /* ignore */ } }
+  app.setPath('userData', dir)
+  return dir
 }
 
 // 打开一个探针窗口：屏幕内 + 几乎全透明（opacity 0.01）+ 静音
@@ -27,6 +35,11 @@ export function useIsolatedProfile(name) {
 // ⚠️ 为什么必须放在**屏幕内**：窗口被放到屏幕外（负坐标）时，Chromium 上报的几何会整体偏移
 // （实测 getBoundingClientRect 比 style.left 多出上百像素），于是「贴角测量」和「按坐标注入点击」
 // 全部失准 —— 排查这个问题花了很久，别再改回屏幕外了。用 opacity 0.01 实现"看不见"即可。
+//
+// ⚠️ 为什么默认是 1100×760 这个**偏小的窗口**：窗口小的时候挂件前端会自动缩小以适配，
+// 几何最"规矩"，注入的点击/拖拽命中稳定；窗口放大到接近满屏时，前端会改用用户设置的 scale
+// （例如 1.5），此时注入输入的命中判定会变得不可靠（实测 1400×1000 / 1900×1200 下"点鲸鱼"会失败，
+// 而 1100×760 下全部通过）。要改尺寸请先跑一遍 dbg 脚本确认交互项仍绿。
 export async function openProbe({ width = 1100, height = 760, mute = true, invisible = true, waitMs = 3000 } = {}) {
   const wa = screen.getPrimaryDisplay().workArea
   const win = new BrowserWindow({
@@ -92,12 +105,17 @@ export function readWidget(win) {
 }
 
 // 用角色图的 alpha 找"确定落在鲸鱼身上"的点（注意：必须按 img 自己的 rect 换算，不是 root）
+//
+// ⚠️ 只统计**落在视口内**的采样点：把挂件放大（scale 变大）后，前端会把右下角略微溢出屏幕，
+// 部分角色图会跑到窗口外 —— 若把窗口外的像素也算进质心，算出来的点会落在视口外，
+// 点击/拖拽就全部失效（而且看着很莫名）。只取可见部分，就能稳稳点到鲸鱼身上。
 export function findWhalePoint(win) {
   return win.webContents.executeJavaScript(`(async () => {
     var img = document.querySelector('img.dshwv-img') || document.querySelector('.dshwv-img')
     if (!img) return { ok: false, why: 'no-whale-img' }
     var r = img.getBoundingClientRect()
     if (!r.width) return { ok: false, why: 'zero-rect' }
+    var vw = window.innerWidth, vh = window.innerHeight
     var probe = new Image()
     return await new Promise(function (resolve) {
       probe.onload = function () {
@@ -105,13 +123,17 @@ export function findWhalePoint(win) {
           var c = document.createElement('canvas'); c.width = probe.naturalWidth; c.height = probe.naturalHeight
           var ctx = c.getContext('2d'); ctx.drawImage(probe, 0, 0)
           var d = ctx.getImageData(0, 0, c.width, c.height).data
-          var sx = 0, sy = 0, n = 0
+          var sx = 0, sy = 0, n = 0, outside = 0
           for (var y = 2; y < c.height - 2; y += 3) for (var x = 2; x < c.width - 2; x += 3) {
             var A = function (xx, yy) { return d[(yy * c.width + xx) * 4 + 3] }
-            if (A(x, y) > 200 && A(x - 2, y) > 200 && A(x + 2, y) > 200 && A(x, y - 2) > 200 && A(x, y + 2) > 200) { sx += x; sy += y; n++ }
+            if (!(A(x, y) > 200 && A(x - 2, y) > 200 && A(x + 2, y) > 200 && A(x, y - 2) > 200 && A(x, y + 2) > 200)) continue
+            var px = r.left + x / c.width * r.width
+            var py = r.top + y / c.height * r.height
+            if (px < 4 || px > vw - 4 || py < 4 || py > vh - 4) { outside++; continue }
+            sx += x; sy += y; n++
           }
-          if (!n) return resolve({ ok: false, why: 'no-solid-pixel' })
-          resolve({ ok: true, solid: n,
+          if (!n) return resolve({ ok: false, why: outside ? 'only-outside-viewport:' + outside : 'no-solid-pixel' })
+          resolve({ ok: true, solid: n, clipped: outside,
             point: [Math.round(r.left + (sx / n) / c.width * r.width), Math.round(r.top + (sy / n) / c.height * r.height)],
             imgRect: { l: Math.round(r.left), t: Math.round(r.top), w: Math.round(r.width), h: Math.round(r.height) } })
         } catch (e) { resolve({ ok: false, why: 'canvas:' + e.message }) }
@@ -202,4 +224,19 @@ export async function resetProbeState(win, { keepPosition = false } = {}) {
 // 兼容旧名：仅用于"抑制首次对齐弹泡"
 export async function suppressAlignmentPop(win, value = 99999) {
   return resetProbeState(win, { keepPosition: true })
+}
+
+// 等"现场没有泡泡"：**消耗/预警泡泡在场时，点鲸鱼是不响应的**（上游设计如此）。
+// 为什么体检必须等：挂件连的是真实服务，体检开始前一刻如果刚好有一轮对话结束，
+// 就会弹出一轮消耗泡泡 —— 于是"点鲸鱼"被它挡掉，交互/拖拽测试全部无辜失败
+// （实测：同一套配置，泡泡在场时 3 项失败、等它关掉后全部通过）。
+// 它默认 5 秒后自动关闭（turnCostCloseMs），等干净再测。
+export async function waitNoBubble(win, maxMs = 15000) {
+  const t0 = Date.now()
+  while (Date.now() - t0 < maxMs) {
+    const s = await readWidget(win)
+    if (!s || !s.bubble || !s.bubble.open) return true
+    await sleep(500)
+  }
+  return false
 }

@@ -35,12 +35,13 @@
 
 - 直接读 OpenCode 本地 API，在**一轮对话真正结束时**（OpenCode 会写 `idle` 标记）把这一整轮的消耗合计成金额喂给挂件
 - 效果：**任务结束响一声 + 弹一次「刚才这轮花了多少」**，干活过程中不打扰
-- 附带一个 OpenCode 插件，让你**启动 OpenCode 时自动拉起**这只鱼（支持热重载）
+- 附带一个 OpenCode 插件，让你**启动 OpenCode 时自动拉起**这只鱼（支持热重载）；**安装时自动登记好**，不用手工改配置
 
 **账目能力全部保留**：余额、今日已用（余额观测记账）、峰谷定价与倒计时、用量记录，以及「小鲸鱼记账」里的 34 个厂商余额模板与自定义 HTTP 接口。少数依赖 DSH 官方的能力在 OpenCode 环境下不可用 —— 见下方「[已知限制](#-已知限制)」。
 
 > 更详细的由来、改造清单与技术取舍 → **[`docs/ORIGIN.md`](docs/ORIGIN.md)**
 > 上游署名与逐条改动 → **[`NOTICE.md`](NOTICE.md)**
+> 每个版本修了什么 bug、做了什么调整（现象 / 根因 / 修法 / 验证）→ **[`CHANGELOG.md`](CHANGELOG.md)**
 
 ## ✨ 主要特性
 
@@ -51,6 +52,7 @@
 - 🧾 **多厂商余额 / 订阅额度**：内置 **34 个模板** —— OpenAI 兼容中转站（OneAPI / New API）、硅基流动、OpenRouter、火山方舟、Kimi、智谱、MiniMax，以及订阅额度类（智谱 / Kimi / MiniMax Coding Plan、**OpenCode Go 订阅额度**）；也支持「自定义 HTTP」自己填地址与 JSON 字段路径。**自定义地址需在本机面板勾选「允许把凭据发送到自定义地址」**（上游的安全策略，防止密钥被发到未知地址）
 - 💬 **每轮对话消耗**：用 **OpenCode** 的会话数据驱动 —— 一轮真正结束时响一次任务结束音 + 弹一次「本轮花了多少」
 - 🎨 泡泡内容、随机台词、图片、音效**全部可在挂件菜单里自定义**（上游能力）
+- 🔧 **环境自检**：`npm run doctor` 一键检查目录权限/沙箱、Electron 二进制、端口、OpenCode 插件登记 —— 专治"装完起不来"
 - 🔍 自带**功能体检**与**密钥/隐私扫描**脚本（`npm run health` / `npm run scan-secrets`）
 
 ---
@@ -71,12 +73,14 @@
 git clone https://github.com/xr05shino23/ds-whale-opencode-widget.git
 cd ds-whale-opencode-widget
 
-npm install                 # 安装 Electron
+npm install                 # 装 Electron（二进制缺失会自动补跑一次）+ 自动登记 OpenCode 插件
 
 node scripts/fetch-assets.mjs   # 取回美术素材（本仓库不含素材，见下节）
 
 npm start                   # 启动桌面挂件
 ```
+
+> 🔧 **装完先跑一次 `npm run doctor`**（环境自检）：它会检查目录权限/沙箱、Electron 二进制、端口、OpenCode 插件登记，并把每个问题连同修复命令一起打出来。比 `npm run health` 更适合"还没跑起来就报错"的情况。
 
 启动后：桌面右下角出现小鲸鱼。**鼠标移到鲸鱼上**它会接收点击，**点击鲸鱼**打开泡泡，**点击泡泡**切到下一屏；**右键/悬停右上角的 ☰** 打开设置菜单（角色、大小、音效、泡泡自定义、资源管理…）；托盘图标可显示/隐藏或退出。
 
@@ -86,9 +90,33 @@ npm start                   # 启动桌面挂件
 npm run server
 ```
 
-### 让 OpenCode 启动时自动拉起挂件（可选）
+### 让 OpenCode 启动时自动拉起挂件（安装时已自动完成）
 
-本仓库自带一个 OpenCode V2 插件。在 `~/.config/opencode/opencode.json(c)` 里加上：
+本仓库自带一个 OpenCode V2 插件，**`npm install` 时已经自动登记好了**（postinstall 会跑 `scripts/setup-opencode.mjs`），正常情况下你不需要做任何额外操作。
+
+它是怎么登记的（三层兜底，从上到下，成功即停）：
+
+| 层 | 做法 | 特点 |
+|---|---|---|
+| ①（默认） | 在 OpenCode 的**自动发现目录** `~/.config/opencode/plugins/whale-autostart` 建一个**目录链接**指向本仓库的插件目录 | 零配置被加载；改代码立即生效，不用复制 |
+| ② | 链接失败（策略/权限/文件系统不支持）→ **复制**一份过去 | 能跑；升级代码后需重跑一次 setup（**再跑一次会自动把副本换成链接**） |
+| ③ | 复制也失败 → 把插件路径**插入** `opencode.json(c)` 的 `plugins` 数组 | 只做最小文本插入（保留注释与格式），改前自动备份 |
+
+需要手动处理时（例如**仓库搬家后链接会失效**）：
+
+```bash
+npm run setup:opencode                 # 幂等，可反复跑；会自愈失效链接
+npm run setup:opencode -- --dry-run     # 先看它准备做什么
+npm run setup:opencode -- --migrate     # 顺手清掉配置里重复的老条目
+npm run setup:opencode -- --remove      # 撤销（重启 OpenCode 后不再自动拉起）
+```
+
+验证：`npm run doctor` 里的「插件已登记」一项；OpenCode 日志（`~/.local/share/opencode/log/opencode.log`）里能看到 `loading plugin ... whale-autostart` 即生效。
+
+<details>
+<summary>进阶：手工登记（一般用不到）</summary>
+
+在 `~/.config/opencode/opencode.json(c)` 里加上：
 
 ```jsonc
 {
@@ -99,6 +127,11 @@ npm run server
 ```
 
 > ⚠️ 注意：OpenCode V2 的 `plugins` 条目**必须是目录**（不能直接指向单个 `.js` 文件，否则会被静默跳过）。插件会从自身位置推导项目根，因此 clone 到哪里都行；特殊布局可用环境变量 `WHALE_DIR` 指定。
+> 注意：如果自动发现目录里已经有一份（上面第①层），两处同时生效会重复加载 —— 用 `--migrate` 清理，或只保留其中一处。
+
+</details>
+
+> 不想让 `npm install` 动你的 OpenCode 配置？设 `WHALE_SKIP_SETUP=1` 跳过；OpenCode 配置目录不在默认位置？设 `WHALE_OPENCODE_CONFIG_DIR=<目录>`。
 
 ---
 
@@ -110,7 +143,10 @@ npm run server
 1) git clone https://github.com/xr05shino23/ds-whale-opencode-widget.git
    cd ds-whale-opencode-widget
 
-2) npm install                     # 装 Electron（devDependency，默认会装）
+2) npm install                     # 装 Electron（devDependency）；并自动把 OpenCode 插件登记好
+   · 不想让它动 OpenCode 配置：设 WHALE_SKIP_SETUP=1
+   · OpenCode 配置目录非默认：设 WHALE_OPENCODE_CONFIG_DIR=<目录>
+   · 更想自己控制登记：设 WHALE_SKIP_SETUP=1，装完再跑 npm run setup:opencode
 
 3) node scripts/fetch-assets.mjs   # 必需：美术素材不随仓库分发，从上游官方源取回
    （没有素材也能启动，会用内置占位形象；但体验最好先取回）
@@ -120,13 +156,19 @@ npm run server
    · 想只跑服务不开界面：npm run server
 
 5) 验证安装成功：
+   · npm run doctor                          → 期望 0 失败（环境/权限/二进制/端口/插件登记）
    · curl http://127.0.0.1:38900/            → HTTP 200
    · curl http://127.0.0.1:38900/dsh-whale/image.png → 200（取回素材后是 image/png）
-   · npm run health                          → 期望 输出「14/14 通过」
+   · npm run health                          → 期望 输出「14/14 通过」（需要挂件在跑）
    · npm run scan-secrets                    → 只应剩 data/ 里的条目（data/ 不入库）
 
 注意：
+- 用 Windows PowerShell 的话，`npm` 可能被系统策略拦住（`npm.ps1` 无法执行）→ 改用
+  `npm.cmd install` / `npm.cmd run xxx`，或先执行 `Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass`。
 - 不要把 data/ 目录提交或上传（里面有本机凭据与账本）；.gitignore 已默认忽略。
+- **不要把项目放在沙箱/受限目录**（安全软件沙箱、Windows「受控文件夹访问」等）：
+  那类目录的 ACL 会 DENY 掉 Synchronize，Electron 启动即崩（退出码 0x80000003）。
+  表现为秒崩、日志里有 EXCEPTION_BREAKPOINT —— 用 npm run doctor 可确诊。
 - 杀软可能把本程序误判为可疑（它会 spawn 子进程、读本机凭据文件、监听本地端口）；
   必要时把项目目录加入信任/排除区。
 - 需要 Node.js 18+（建议 20+）。
@@ -159,6 +201,9 @@ node scripts/fetch-assets.mjs --force  # 覆盖已存在的素材
 | `WHALE_OPENCODE_URL` | 自动发现 | 直接指定 OpenCode 服务地址（例如 `http://127.0.0.1:49374`），跳过自动发现 |
 | `OPENCODE_BIN` | 自动查找 | 指定 `opencode.exe` 路径（仅在自动发现失败时需要） |
 | `WHALE_DIR` | 自动推导 | 挂件项目根目录（OpenCode 插件用；默认从插件位置上跳两级） |
+| `WHALE_OPENCODE_CONFIG_DIR` | `~/.config/opencode` | OpenCode 配置目录（`setup:opencode` 登记与 `doctor` 检查用；配置目录不在默认位置时设它） |
+| `WHALE_SKIP_SETUP` | — | 设 `1` 时 `npm install` 不再自动登记 OpenCode 插件、也不补跑 Electron 二进制 |
+| `WHALE_ENSURE_TIMEOUT_MS` | `60000` | 安装期补跑 `electron/install.js` 的时间上限（毫秒） |
 
 ---
 
@@ -205,7 +250,8 @@ node scripts/fetch-assets.mjs --force  # 覆盖已存在的素材
 
 ## 🧭 已知限制
 
-- **平台**：目前只在 **Windows** 上实测过（作者环境：2560×1440 / 100% 缩放）。macOS / Linux 未验证 —— 代码里已做跨平台处理（Electron 可执行文件路径、端口、路径推导），欢迎 PR 或反馈。
+- **平台**：目前只在 **Windows** 上实测过（作者环境：Windows 10 22H2 / 2560×1440 / 100% 缩放）。macOS / Linux 未验证 —— 代码里已做跨平台处理（Electron 可执行文件路径、端口、路径推导），欢迎 PR 或反馈。
+- **Electron 版本**：实测版本 **44.4.5**（`npm install` 默认装的就是它）。挂件只用到很基础的 Electron API，理论上多数版本都能跑；若最新版在你的机器上有异常，可自行换到仍在[官方支持窗口](https://www.electronjs.org/docs/latest/tutorial/electron-timelines)内的版本，例如 `npm i -D electron@42.11.8`。
 - **OpenCode 版本**：作者只在 **OpenCode TUI（CLI）** 上实测过。按[官方文档](https://opencode.ai/v2/docs/cli/web/)，**Web UI / 桌面 App 与 TUI 由同一个服务提供**（默认 `127.0.0.1:49374`，仅监听本机）—— 而本插件的用量桥连的正是**那个服务**，因此三种客户端应当都能直接工作。如果你用的是**独立服务器**（`opencode serve` 或自定义端口），用环境变量 `WHALE_OPENCODE_URL=http://127.0.0.1:<端口>` 指定即可。
 - **DSH 专属能力在 OpenCode 环境下不可用**：DSH 账号登录态查余额、提问/授权提示音与提示泡泡、`{session}` 对话名（会回落成「当前对话」）。
 - 金额是**估算**，和官方账单可能对不上（价格/缓存计费口径差异）。
@@ -217,9 +263,14 @@ node scripts/fetch-assets.mjs --force  # 覆盖已存在的素材
 ## 🧪 自检
 
 ```bash
+npm test                # 自测：用量桥判定 17 + 插件自动登记 34 + 二进制兜底 23 = 74 项
+npm run doctor          # 环境自检：目录权限/沙箱 · Electron 二进制 · 能否启动 · 端口 · 素材 · OpenCode 插件登记
 npm run health          # 一键功能体检：接口矩阵 / 渲染 / 交互 / 拖拽 / 音效链路（默认静音、隔离 profile）
 npm run scan-secrets    # 发布前自查：真实凭据 / 本机路径 / 隐私痕迹
 ```
+
+- `doctor` **不需要挂件在跑**，装完就能用；每一项都会给出修复命令。`health` 需要挂件已在运行。
+- 自测全程在临时目录里跑，不会动你真实的 OpenCode 配置。
 
 - 体检脚本**默认静音**且使用**隔离的用户数据目录**，不会动你的真实设置，也不会出声。
 - 体检明细与已知行为（点击语义、泡泡自动关闭、长句折行等）见 [`docs/HEALTH-CHECK.md`](docs/HEALTH-CHECK.md)。
@@ -232,23 +283,60 @@ npm run scan-secrets    # 发布前自查：真实凭据 / 本机路径 / 隐私
 **杀软报毒 / 文件被隔离？**
 本程序会 spawn 子进程、读取消库外的凭据文件、并监听本地端口 —— 行为画像容易被启发式引擎误判（例如卡巴斯基的 `PDM:Trojan.Win32.Generic`）。这是**误报**：代码全部开源可审计。把项目目录加入信任/排除区即可。本项目已尽量避免可疑行为（例如不再通过 shell 调用 CLI）。
 
-**`npm install` 之后 `npm start` 起不来 / 提示找不到 electron？**
-多半是 **Electron 的二进制没下下来**（它要单独下载约 100MB，国内直连 GitHub 容易失败，且 npm 有时只报"装好了"）。查一下：
+**在 PowerShell 里敲 `npm` 报「禁止运行脚本」(PSSecurityException / 无法加载文件 npm.ps1)？**
+Windows 默认不允许在 PowerShell 里执行脚本，而 `npm` 其实是个 `npm.ps1`。三种解法任选：
 
-```bash
-node -e "console.log(require('electron'))"        # 应打印 electron 可执行文件路径
-# 或直接看 node_modules/electron/dist/electron.exe 是否存在
+```powershell
+npm.cmd install                                        # ① 用 .cmd 版本（最省事）
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass   # ② 只放开当前这个窗口
+# ③ 或者干脆用 cmd（命令提示符）来执行 npm 命令
 ```
 
-没下下来就用国内镜像重装：
+`npm run xxx` / `npx xxx` 同理，换成 `npm.cmd run xxx`、`npx.cmd xxx` 即可。这与本挂件无关，是 Node.js 在这台机器上的安装方式 + Windows 默认策略导致的。
+
+**`npm install` 之后 `npm start` 起不来 / 提示找不到 electron / 报 `Electron failed to install correctly`？**
+这是 **Electron 的二进制没下成功**（它要单独下载约 100MB，国内直连 GitHub 容易失败；npm 有时只把包解开、却说"装好了"）。三种修法，从简单到彻底：
 
 ```bash
+# ① 先补跑它的安装脚本（最常见的情况这一步就解决）
+node node_modules/electron/install.js
+
+# ② 还不行 → 换国内镜像后重装
 npm config set electron_mirror https://npmmirror.com/mirrors/electron/
 npm install
 # 或者只对本次生效：
 #   Windows:      set ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/   && npm install
 #   macOS/Linux:  export ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/ && npm install
+
+# ③ 确认现在到底有没有下载好
+node -e "console.log(require('electron'))"        # 应打印 electron 可执行文件路径
+# 或看 node_modules/electron/dist/electron.exe 是否存在（macOS/Linux 路径不同）
 ```
+
+`npm run doctor` 会直接告诉你二进制在不在、能不能启动。
+
+> 安装时其实已经兜底过一次了：`npm install` 结束前会自动检查二进制，缺失就补跑一次 `install.js`（**带 60 秒上限**，即使失败也不会让安装报错）。如果你看到"⚠ 补跑失败/已放弃"的提示，再按上面三步手动来一次即可。
+
+**`npm start` 秒崩、退出码 `0x80000003`，报 `EXCEPTION_BREAKPOINT` / `IsLoadBrowserProcessSpecificV8SnapshotEnabled`？**
+这是 **目录权限/沙箱问题，不是挂件的问题**。Electron 启动时要内存映射自己的资源文件（`snapshot_blob.bin`），而某些目录被 ACL 显式 **DENY 掉了 Synchronize 权限**、或带"低完整性级别"标记（典型是安全软件沙箱、自动化工具的受限目录）→ 映射失败 → V8 直接崩溃，连 `main.js` 第一行都执行不到。
+
+特征：**换到普通目录就正常**；换 Electron 版本、换二进制都没用（实测 Electron 33 与 44 表现一致）。
+
+```bash
+npm run doctor          # 会报出「目录含显式 DENY 权限 / 强制性完整性标签」并给出结论
+```
+
+修法：**把项目移到普通目录**（例如「文档」下新建一个文件夹再 clone），别放在沙箱目录、安全软件的受控目录，或 Windows「受控文件夹访问」保护的目录里。
+
+**装了挂件，但 OpenCode 启动时没有自动拉起？**
+先确认插件登记还在（**仓库搬家**、动过配置都会导致失效）：
+
+```bash
+npm run doctor          # 看「插件已登记」一项
+npm run setup:opencode  # 不在就自动补上（幂等，可反复跑）
+```
+
+它会在 `~/.config/opencode/plugins/whale-autostart` 建一个指向本仓库的目录链接 —— 这是 OpenCode 的**自动发现目录**，不需要改 `opencode.json`。想确认是否真被加载：看 `~/.local/share/opencode/log/opencode.log` 里有没有 `loading plugin ... whale-autostart`。
 
 **我是 OpenCode 桌面版 / Web 版用户，挂件能连上吗？**
 **能，原则上不需要任何适配。** 官方文档写明：Web UI 与 TUI **由同一个服务提供**（桌面 App 通过 `opencode pair` 或填服务器地址连过去的也是它）。而本插件的用量桥读的是**那个服务**的 API，不是某个客户端，所以 TUI / Web / 桌面 App 都通用。
@@ -299,7 +387,8 @@ tar -xzf dsh-whale-widget-0.3.16.tgz  # 解出 package/assets/*
 默认是「**点鲸鱼 = 打开/重置，点泡泡 = 推进下一屏**」。想让点鲸鱼也能推进，在「按压泡泡设置」里打开「点按角色推进泡泡队列」开关。
 
 **每轮消耗没弹出来？**
-确认 `bubbleOn` 与 `turnCostOn` 都开着；另外消耗/预警泡泡在场时，点鲸鱼是**不响应**的（要点泡泡）。
+- 先确认 `bubbleOn` 与 `turnCostOn` 都开着（菜单 → 音效与提示 → 全局设置 → 每轮消耗提示）；另外消耗/预警泡泡在场时，点鲸鱼是**不响应**的（要点泡泡）。
+- **如果是"长对话跑到后面就再也不弹了"**（尤其是一轮里工具调用很多的时候）—— 那是 **v0.1.0 的已知 bug**：OpenCode 的消息接口只返回**最近 50 条**，长了以后 `user` 消息被挤出窗口，用量桥会误判"这不是用户会话"、跳到别的旧会话上，于是那一轮再也不记账。**v0.1.1 已修复**（`npm run test:bridge` 里有专门的回归用例）。用 `npm start` 在控制台启动挂件，日志里能看到 `[bridge] tracking session <id>`，确认它跟的是**你当前**会话的 id 就说明正常。
 
 ---
 
@@ -311,8 +400,11 @@ src/shim.mjs                 宿主兼容层（让上游插件跑在普通 Node 
 src/bridge.mjs               OpenCode 用量桥（轮结束驱动）
 src/placeholder.mjs          素材缺失时的占位形象/图标
 opencode-plugin/             OpenCode 插件（启动时自动拉起挂件）
-tools/                       自检工具（体检 / 密钥扫描 / 探针基座）
+scripts/setup-opencode.mjs   把插件登记进 OpenCode（npm install 时自动跑）
+scripts/ensure-electron.mjs  安装期兜底：Electron 二进制缺失就补跑一次（带时间上限）
 scripts/fetch-assets.mjs     取回上游美术素材
+tools/doctor.mjs             环境自检（npm run doctor）
+tools/                       自检工具（功能体检 / 密钥扫描 / 探针基座 / 登记脚本自测）
 vendor/dsh-whale-widget/     上游插件（MIT；其中 assets/ 素材不随仓库分发）
 data/                        运行数据（**不入库**）
 _private/                    本地私有备份（**不入库**）

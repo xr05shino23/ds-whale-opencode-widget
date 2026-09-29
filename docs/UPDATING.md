@@ -22,6 +22,7 @@ git push                  # ④ 推送
 
 ```powershell
 npm run scan-secrets      # 期望：A 级只剩 data/ 里的条目（data/ 已被 .gitignore 忽略）
+npm run doctor            # 期望：0 失败（顺手确认环境/插件登记没被自己搞坏）
 git status --short        # 确认列表里没有 data/、node_modules/、素材
 ```
 
@@ -99,10 +100,67 @@ git push --tags
 
 ---
 
-## 六、发布前的检查清单
+## 六、安装期自动登记（postinstall）与相关脚本
+
+`package.json` 里有三个与 OpenCode 集成有关的入口：
+
+| 命令 | 作用 |
+|---|---|
+| `postinstall`（= `ensure-electron.mjs` + `setup-opencode.mjs --soft`） | `npm install` 之后：① 检查并补齐 **Electron 二进制**（缺失才补跑 install.js，带 60 秒上限，绝不阻断安装）② **自动把插件登记进 OpenCode** |
+| `npm run ensure:electron` | 手动检查/补齐 Electron 二进制（等价于 postinstall 的前半步） |
+| `npm run setup:opencode` | 手动/修复插件登记（幂等）。`--dry-run` 预览 · `--migrate` 清理重复的老条目 · `--remove` 撤销 |
+| `npm run doctor` | 环境自检（含"插件是否已登记"和"二进制在不在"） |
+
+登记策略（三层兜底）：① 在 `~/.config/opencode/plugins/whale-autostart` 建**目录链接** → ② 链接失败则**复制** → ③ 复制失败则**最小文本插入** `opencode.json(c)` 的 `plugins` 数组（改前备份成 `opencode.json.bak-<时间戳>`，保留注释与格式）。
+
+维护者注意：
+
+- **仓库搬家后链接会失效**（链接存的是绝对路径）→ 在新目录重跑 `npm run setup:opencode`；`doctor` 会先报出来
+- 自测：`npm run test:setup`（34 项，覆盖三层兜底 + 撤销 + 幂等（**含"跑第二遍不许把链接降级成副本"**）+ BOM 处理 + **不碰用户自己的同名目录**；全程用临时配置目录，不动你真实的 OpenCode 配置）
+- 调试开关：`WHALE_SETUP_FORCE=copy|config` 强制走第②/③层；`WHALE_OPENCODE_CONFIG_DIR=<目录>` 隔离测试 —— **别拿真实配置目录做测试**
+- 不想让 `npm install` 动配置：`WHALE_SKIP_SETUP=1`；CI 环境自动跳过
+
+---
+
+## 七、发布前的检查清单
 
 - [ ] `npm run scan-secrets` → A 级没有新增（`data/` 已被忽略）
+- [ ] `npm run doctor` → 0 失败
 - [ ] 提交里没有 `data/`、`node_modules/`、美术素材（`*.png/gif/mp3/wav`）
 - [ ] 若改了 `vendor/` 里的上游文件 → **同步更新 `NOTICE.md` 的改动清单**
 - [ ] README 里的 clone 地址与仓库名一致
 - [ ] `npm run health` 过一遍（需要挂件在运行）
+- [ ] **动过 Electron 版本 → 必须重跑 `npm run doctor` + `npm run health`**，并把实测版本同步进 README「已知限制」
+- [ ] 改过 `scripts/setup-opencode.mjs` / `opencode-plugin/` → 重跑 `npm run test:setup`
+- [ ] 改过 `scripts/ensure-electron.mjs` → 重跑 `npm run test:electron`
+- [ ] 改过 `src/bridge.mjs` → 重跑 `npm run test:bridge`（并顺手确认长对话下"每轮消耗"还能弹）
+- [ ] 干净克隆验证一遍（见第八节）
+
+---
+
+## 八、干净克隆验证（发版前建议跑一次）
+
+```powershell
+$t = "$env:TEMP\whale-clone-test"
+Remove-Item -Recurse -Force $t -ErrorAction SilentlyContinue
+New-Item -ItemType Directory -Force $t | Out-Null
+git ls-files -co --exclude-standard | ForEach-Object {
+  $dst = Join-Path $t $_; $d = Split-Path $dst -Parent
+  if ($d) { New-Item -ItemType Directory -Force $d | Out-Null }
+  Copy-Item $_ $dst
+}
+cd $t
+
+# ⚠️ 关键：用【临时】配置目录，别让临时克隆把自己登记进真实的 OpenCode 配置
+$env:WHALE_OPENCODE_CONFIG_DIR = "$env:TEMP\whale-clone-cfg"
+Remove-Item -Recurse -Force $env:WHALE_OPENCODE_CONFIG_DIR -ErrorAction SilentlyContinue
+
+npm install                     # postinstall 会往上面那个临时目录登记插件
+npm run doctor                  # 期望 0 失败（没素材只算警告）
+node scripts/fetch-assets.mjs   # 取素材
+```
+
+要点：
+
+- `git ls-files -co --exclude-standard` = 已跟踪 + 未跟踪但**没被忽略**的文件，即"将来会提交的全部内容"
+- **一定要设 `WHALE_OPENCODE_CONFIG_DIR`**（或 `WHALE_SKIP_SETUP=1`），否则临时克隆会把自己的路径写进你真实的 `~/.config/opencode/plugins/`，把正式环境指跑偏

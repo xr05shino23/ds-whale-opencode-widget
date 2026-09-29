@@ -2,10 +2,10 @@
 // 用法： npx electron tools/health-check.mjs      （或 npm run health）
 // 默认静音、默认隔离 profile：不打扰你，也不动你的真实设置。
 import { app } from 'electron'
-import { URL, sleep, muteEverything, useIsolatedProfile, openProbe, readWidget, findWhalePoint, clickAt, dragBy, installAudioProbe, readAudioProbe, setMockSeq, resetProbeState } from './probe.mjs'
+import { URL, sleep, muteEverything, useIsolatedProfile, openProbe, readWidget, findWhalePoint, clickAt, dragBy, installAudioProbe, readAudioProbe, setMockSeq, resetProbeState, waitNoBubble } from './probe.mjs'
 
 muteEverything()
-useIsolatedProfile('health-check')
+useIsolatedProfile('health-check', { fresh: true })
 
 const ENDPOINTS = [
   '/', '/dsh-whale/balance.json', '/dsh-whale/size.json', '/dsh-whale/usage-records.json',
@@ -56,6 +56,11 @@ app.whenReady().then(async () => {
     // （隔离 profile 会跨次运行保留上次拖拽的位置锚点，不清理会让挂件停在别处）
     await resetProbeState(win)
 
+    // 再等现场没有泡泡：挂件连的是真实服务，若刚刚有一轮对话结束，会弹出一轮消耗泡泡，
+    // 而"消耗泡泡在场时点鲸鱼不响应" → 交互/拖拽会无辜失败。等它自动关闭再开始测。
+    const noBubble = await waitNoBubble(win)
+    console.log('  · 交互测试前：现场无泡泡 ' + (noBubble ? '✓' : '（等待超时，交互项可能受影响）'))
+
     // 渲染
     console.log('\n[2] 渲染')
     const s = await readWidget(win)
@@ -73,7 +78,12 @@ app.whenReady().then(async () => {
     console.log('\n[3] 交互（真实输入事件）')
     const w = await findWhalePoint(win)
     if (!w.ok) { bad('鲸鱼命中点定位失败', w.why) }
-    else {
+    else if (w.point[0] < 0 || w.point[0] >= s.viewport[0] || w.point[1] < 0 || w.point[1] >= s.viewport[1]) {
+      // 命中点跑到视口外 = 探针窗口装不下缩放后的挂件（用户把 scale 调大过就会这样）。
+      // 这时点击/拖拽必然失败，且失败原因看着很神秘 —— 明确报出来，别让人误以为是挂件坏了。
+      bad('鲸鱼命中点落在视口外 → 后续点击/拖拽必然失败',
+        '视口 ' + s.viewport.join('x') + '，命中点 ' + w.point.join(',') + '，挂件基准宽 base=' + s.base + '（缩放越大越容易撞上）')
+    } else {
       await clickAt(win, w.point[0], w.point[1])
       let a = await readWidget(win)
       a.bubble.open ? ok('点鲸鱼 → 泡泡打开（手动序列第 1 屏）', JSON.stringify(a.bubble.rows.length ? a.bubble.rows.map((r) => r.t) : a.bubble.three)) : bad('点鲸鱼没有打开泡泡')

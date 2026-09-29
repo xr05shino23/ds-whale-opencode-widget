@@ -46,6 +46,8 @@ src/bridge.mjs               ← 新增：OpenCode 用量桥（轮结束 → 金
 src/server.mjs               ← 新增：不开 Electron 的纯服务模式
 src/placeholder.mjs          ← 新增：素材缺失时的内置占位形象 / 托盘图标
 opencode-plugin/             ← 新增：OpenCode 插件（启动时自动拉起挂件）
+scripts/setup-opencode.mjs   ← 新增：把插件登记进 OpenCode（安装时自动跑，三层兜底）
+tools/doctor.mjs             ← 新增：环境自检（目录权限/沙箱、二进制、端口、插件登记）
 tools/                       ← 新增：自检工具（功能体检 / 探针基座 / 密钥与隐私扫描）
 scripts/fetch-assets.mjs     ← 新增：从上游官方源取回美术素材
 vendor/dsh-whale-widget/     ← 上游 v0.3.16（只改了 1 个文件，见第五节）
@@ -62,13 +64,35 @@ data/                        ← 运行时数据（凭据、账本、你的配�
 | `ctx.get('sessionTitle')` | 返回空串 → 挂件回落显示「当前对话」 |
 | `ctx.get('deepseekAccount')` / `ctx.get('connection')` | 返回 `null` → 上游代码本身会跳过这两条路（降级） |
 
+### OpenCode 插件是怎么被加载的（v0.1.1 起安装即自动登记）
+
+OpenCode **不会**自动加载"仓库里的"插件目录，必须把它接进配置。官方支持两条路：
+
+| 路线 | 位置 | 特点 |
+|---|---|---|
+| `plugins` 数组 | `opencode.json(c)` 里列路径 | 要改用户的配置文件（JSONC 带注释，改写容易弄坏格式） |
+| **自动发现目录** | `~/.config/opencode/plugins/<插件包目录>/` | **零配置**被加载；只要里层是"带 `package.json` 的插件包目录"即可 |
+
+本版选**自动发现目录**为主：安装时（`postinstall`）把 `opencode-plugin/whale-autostart` **链接**过去（Windows 用 junction，免管理员；mac/Linux 用 symlink）—— 好处是**改代码立即生效**，不需要复制、也不会和仓库不同步。链接不可用时退化为复制；复制也不行才退化为"最小文本插入 `plugins` 数组"（改前自动备份，保留注释与格式）。
+
+实测证据（本机 OpenCode 日志，建链接后**无需重启**即被加载）：
+
+```text
+msg="loading plugin"
+    id="C:\Users\<你>\.config\opencode\plugins\whale-autostart"
+    entrypoint=file:///E:/<仓库>/opencode-plugin/whale-autostart/index.js
+```
+
+> 坑：链接存的是**绝对路径**，**仓库搬家后链接会失效**（`doctor` 会报、`npm run setup:opencode` 会自愈）。
+> 坑：如果用户之前按旧文档手改过 `plugins` 数组，就会"链接 + 数组"双份登记 → 重复加载（挂件有单实例锁不会双开，但多一次无用启动）→ `--migrate` 清理。
+
 ### 用量桥（`src/bridge.mjs`）的几个设计取舍
 
 | 问题 | 做法 |
 |---|---|
 | 「一轮」怎么判定？ | OpenCode 在**一轮结束时**会写一条 `idle` 消息（带 `outcome`）。桥检测到**新的 idle** 才发布一次 `seq`，前端据此响一声 + 弹一次金额 |
 | 金额怎么算？ | 取这一轮里所有 `assistant` 消息的 `cost` 合计（消息级、精确），换算 `× WHALE_USD_CNY`（默认 7.1） |
-| 会不会记到别人头上？ | 只认**主会话**：`agent` 必须是字符串（子代理会话的 `agent` 是 `undefined`）；候选按 **running 优先 → `viewed` 最新**排序；上次选中的会话若还在 running 档就继续用（避免来回跳） |
+| 会不会记到别人头上？ | 只认**主会话**：`agent` 必须是字符串（子代理会话的 `agent` 是 `undefined`）；候选按 **running 优先 → `viewed` 最新**排序；上次选中的会话若还在 running 档就继续用（避免来回跳）。⚠️ 判「这是不是用户会话」**不能依赖消息页**——消息接口是分页的（见下方踩坑表第一条） |
 | 会不会频繁拉数据？ | 用 `session.time.idle` 做门控 —— **一轮最多拉一次消息列表**；会话无动静时完全不拉 |
 | 怎么找 OpenCode 服务地址？ | ① 环境变量 `WHALE_OPENCODE_URL` → ② 上次成功的地址缓存（只发一次 HTTP 探活）→ ③ **直接执行 `opencode.exe`（不经 shell）** 问它并缓存。稳态**零子进程** |
 | 为什么不起 shell？ | 上游老做法是 `execFile('opencode', …, {shell:true})`，而 Windows 上 `opencode` 是 npm 的 `.cmd/.ps1` shim，必须经 shell —— 那是最容易被杀软行为引擎盯上的动作。本版改为直接跑真实 `.exe` |
@@ -128,6 +152,7 @@ git diff --no-index --ignore-cr-at-eol package/assets/whale-widget.js vendor/dsh
 
 | 坑 | 结论 |
 |---|---|
+| **消息接口是分页的（只返回最近 50 条）→ 长对话下"每轮消耗"会静默失效** | `/api/session/<id>/message` 实测只返回最近 50 条（响应里带 `cursor.previous/next`）。一轮工具调用多的对话就能产出 50+ 条消息，于是窗口里**看不到 user 消息**、而且常常**只剩 1 条 idle**。旧实现据此把用户正在用的会话判成"不是用户会话"，还把这个错误结论**缓存 10 分钟** → 桥**跳到另一个旧会话**上，那个会话永远不结束轮次 → 表现为「挂件有一段时间不弹消耗提示了」（实测复现：跨会话跳变，日志里能看到 `tracking session` 换了 id）。修法两条：① 页面被截断时**不下"非用户会话"的结论、也不缓存否定**；② 推不出"上一条 idle"时，用**上次观测到的 idle 时刻**当本轮起点，否则金额会把好几轮加在一起（虚高）。顺带把判定逻辑抽成纯函数 `analyzeTurn`，配 `npm run test:bridge`（17 项单测，用合成数据把这个 bug 钉死） |
 | OpenCode V2 的 `plugins` 条目**必须是目录** | 指向单个 `.js` 会被静默跳过（日志只有一行 warning）。本版插件用「目录 + package.json」形式 |
 | **单实例锁** | 第二个副本会**静默退出**（`singleInstanceLock = false`），容易被误判成"启动失败"。同时跑两份要用 `--user-data-dir` 隔离 |
 | Electron 二进制**国内下不动** | `npm install` 可能"成功"但 `node_modules/electron/dist` 不存在 → 用 `ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/` 重装 |
@@ -135,6 +160,9 @@ git diff --no-index --ignore-cr-at-eol package/assets/whale-widget.js vendor/dsh
 | 插件的**模块级"只启动一次"标志** | 会让"挂件被关掉后重新加载插件"再也拉不起来（ESM 模块缓存）→ 去掉标志，靠 Electron 单实例锁去重 |
 | **素材脚本超时太短** | 最大的素材（2.7MB）从 jsDelivr 下载要 ~36–57 秒 → 超时提到 90 秒并增加备用 CDN |
 | 诊断脚本**不能出声** | 之前用真实窗口做音效验证时没有静音，导致用户听到"无缘无故的结束音" → `tools/probe.mjs` 现在默认 `setAudioMuted(true)` |
+| **沙箱目录的 ACL 会让 Electron"秒崩"** | 目录被 `icacls` 显式 `DENY` 掉 `Synchronize`（或带"低完整性级别"标记）时，Electron 启动要 `MapViewOfFile` 内存映射 `snapshot_blob.bin` 会失败 → V8 直接 `EXCEPTION_BREAKPOINT`（退出码 `0x80000003`），连 `main.js` 第一行都执行不到。**三重排除证据**：换 Electron 33 一样崩、两个二进制 SHA256 一致、空 `main.js` 也崩 → 与版本/代码/二进制无关，就是目录权限。→ `npm run doctor` 会对比"全新普通目录"的 ACL 把它抓出来 |
+| **OpenCode 不会加载"仓库里的"插件目录** | 以前只能让用户手工改 `opencode.json`（新用户容易漏、导致不自动拉起）。V2 支持 `~/.config/opencode/plugins/` **自动发现目录** → 改成安装时自动建链接（`scripts/setup-opencode.mjs`），零配置 |
+| **自动登记脚本的三个 bug（自测才发现的）** | ① 配置文件不存在时却去备份它 → `ENOENT`；② 第③层没先创建配置目录 → `ENOENT`；③ 最小文本插入时把"上一行内容"当成缩进 → **把数组里已有的插件条目拼坏**。→ 从此 setup 脚本配了正式自测（`npm run test:setup`，34 项，覆盖三层兜底 + 撤销 + 幂等 + "副本升级成链接" + BOM 处理 + "不碰用户自己的同名目录"）——**不测不敢说"能兜底"** |
 
 ---
 

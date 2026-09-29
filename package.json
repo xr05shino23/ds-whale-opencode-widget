@@ -1,6 +1,6 @@
 {
   "name": "ds-whale-opencode-widget",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "description": "Unofficial desktop port of the DSH DeepSeek balance whale widget (Electron), adapted for OpenCode",
   "keywords": [
@@ -27,6 +27,14 @@
     "server": "node src/server.mjs",
     "start": "electron .",
     "health": "electron tools/health-check.mjs",
+    "doctor": "node tools/doctor.mjs",
+    "test": "node tools/test-bridge.mjs && node tools/test-setup-opencode.mjs && node tools/test-ensure-electron.mjs",
+    "test:setup": "node tools/test-setup-opencode.mjs",
+    "test:bridge": "node tools/test-bridge.mjs",
+    "test:electron": "node tools/test-ensure-electron.mjs",
+    "setup:opencode": "node scripts/setup-opencode.mjs",
+    "ensure:electron": "node scripts/ensure-electron.mjs",
+    "postinstall": "node scripts/ensure-electron.mjs && node scripts/setup-opencode.mjs --soft",
     "scan-secrets": "node tools/scan-secrets.mjs",
     "fetch-assets": "node scripts/fetch-assets.mjs"
   },
