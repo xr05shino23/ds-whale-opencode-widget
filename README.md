@@ -222,6 +222,7 @@ npm run scan-secrets    # 发布前自查：真实凭据 / 本机路径 / 隐私
 
 - 体检脚本**默认静音**且使用**隔离的用户数据目录**，不会动你的真实设置，也不会出声。
 - 体检明细与已知行为（点击语义、泡泡自动关闭、长句折行等）见 [`docs/HEALTH-CHECK.md`](docs/HEALTH-CHECK.md)。
+- 维护者：更新代码 / 发布新版本 / 凭据与常见报错的完整流程见 [`docs/UPDATING.md`](docs/UPDATING.md)。
 
 ---
 
