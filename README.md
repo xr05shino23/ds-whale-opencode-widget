@@ -206,7 +206,7 @@ node scripts/fetch-assets.mjs --force  # 覆盖已存在的素材
 ## 🧭 已知限制
 
 - **平台**：目前只在 **Windows** 上实测过（作者环境：2560×1440 / 100% 缩放）。macOS / Linux 未验证 —— 代码里已做跨平台处理（Electron 可执行文件路径、端口、路径推导），欢迎 PR 或反馈。
-- **OpenCode 版本**：只在 **OpenCode TUI（CLI）** 上实测过；**桌面版（Desktop）未经测试**。理论上无需适配 —— 挂件是独立悬浮窗（不嵌在 OpenCode 界面里），「每轮消耗」的数据来自 **OpenCode 后台服务**，TUI 与桌面版都连同一个服务。若桌面版使用**独立服务或独立数据目录**，用量桥可能连不上，验证方法见下方常见问题。
+- **OpenCode 版本**：作者只在 **OpenCode TUI（CLI）** 上实测过。按[官方文档](https://opencode.ai/v2/docs/cli/web/)，**Web UI / 桌面 App 与 TUI 由同一个服务提供**（默认 `127.0.0.1:49374`，仅监听本机）—— 而本插件的用量桥连的正是**那个服务**，因此三种客户端应当都能直接工作。如果你用的是**独立服务器**（`opencode serve` 或自定义端口），用环境变量 `WHALE_OPENCODE_URL=http://127.0.0.1:<端口>` 指定即可。
 - **DSH 专属能力在 OpenCode 环境下不可用**：DSH 账号登录态查余额、提问/授权提示音与提示泡泡、`{session}` 对话名（会回落成「当前对话」）。
 - 金额是**估算**，和官方账单可能对不上（价格/缓存计费口径差异）。
 - 挂件窗口只铺**主显示器**；暂不支持把鲸鱼放到副屏。
@@ -250,14 +250,19 @@ npm install
 #   macOS/Linux:  export ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/ && npm install
 ```
 
-**我是 OpenCode 桌面版用户，挂件能连上吗？**
-只在 **TUI（CLI）** 上实测过，桌面版**未经测试**，但理论上不需要适配（挂件是独立悬浮窗；数据来自 OpenCode 的后台服务，两种客户端都连同一个服务）。三步自查：
+**我是 OpenCode 桌面版 / Web 版用户，挂件能连上吗？**
+**能，原则上不需要任何适配。** 官方文档写明：Web UI 与 TUI **由同一个服务提供**（桌面 App 通过 `opencode pair` 或填服务器地址连过去的也是它）。而本插件的用量桥读的是**那个服务**的 API，不是某个客户端，所以 TUI / Web / 桌面 App 都通用。
 
-1. 开着桌面版，看挂件日志（`npm start` 时的控制台，或托盘启动时的输出）有没有：
-   `[bridge] OpenCode 服务地址（来自 opencode.exe）: http://127.0.0.1:xxxxx` + `[bridge] tracking session ses_xxx`
-   —— 有这两行就是通了 ✅
-2. 没有的话，确认服务是否共用：`opencode service status`、`opencode api get /api/info`
-3. 仍不行 → 提 issue，附上桌面版的安装路径与进程命令行，我来判断怎么适配（最可能是需要补一个"从桌面版发现服务地址"的分支）
+自查一下（3 步）：
+
+1. 看挂件日志有没有这两行：
+   `[bridge] OpenCode 服务地址（来自 opencode.exe）: http://127.0.0.1:49374` + `[bridge] tracking session ses_xxx` —— 有就是通了 ✅
+2. 想看服务本身：`opencode service status` / `opencode api get /api/info`
+3. 如果你跑的是**独立服务器**（`opencode serve --port 4096` 之类）或改了端口：
+   ```powershell
+   set WHALE_OPENCODE_URL=http://127.0.0.1:4096    # 再启动挂件
+   ```
+   挂件会直接用这个地址，不再自动发现 ✅
 
 **改设置时报「设置保存失败: Failed to fetch」？**
 说明挂件的**本地服务没在监听**（界面能点，但所有读写请求都发不出去）。最常见的原因是启动时端口被另一个实例占用，而那个实例后来退出了。退出挂件重新启动即可；**新版会自动重试接管端口**，不需要手动处理。

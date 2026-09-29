@@ -98,7 +98,8 @@ data/                        ← 运行时数据（凭据、账本、你的配�
 | **`{session}` 对话名** | ⚠️ 降级 | 回落显示「当前对话」 |
 
 > **验证口径**：以上均在 **OpenCode TUI（CLI）** 上实测（本机 OpenCode v2.0.18）。
-> **桌面版（Desktop）未经测试** —— 挂件是独立悬浮窗、不嵌入 OpenCode 界面，用量数据取自 **后台服务**（TUI 与桌面版都连同一个服务），因此理论上无需适配；但若桌面版使用独立服务或独立数据目录，`src/bridge.mjs` 需要补一个"服务发现"分支（当前支持：环境变量 `WHALE_OPENCODE_URL` → 地址缓存 → 直接执行 `opencode.exe` 询问）。
+> **Web UI / 桌面 App 不需要额外适配** —— 按[官方文档](https://opencode.ai/v2/docs/cli/web/)，它们与 TUI **由同一个服务提供**（默认 `127.0.0.1:49374`，仅本机），而 `src/bridge.mjs` 读的就是那个服务的 API，与客户端类型无关。
+> 若使用**独立服务器**（`opencode serve`）或自定义端口，用 `WHALE_OPENCODE_URL` 指定地址即可（当前发现顺序：环境变量 → 地址缓存 → 直接执行 `opencode.exe` 询问）。
 
 ---
 
