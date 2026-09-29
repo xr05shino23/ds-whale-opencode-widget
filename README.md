@@ -1,7 +1,9 @@
 # ds-whale-opencode-widget
 
-> **非官方**的「小鲸鱼余额挂件」**桌面版（Electron）** + **OpenCode 适配**。
-> Unofficial desktop (Electron) + OpenCode port of the [DSH Whale Balance Widget](https://github.com/MeteorNOX/DeepSeek-Balance-Whale-Widget).
+> **非官方**的「小鲸鱼余额挂件」**桌面版（Electron）**，可选接入 **OpenCode**。
+> 余额类功能**独立可用**（换哪个 agent 都不影响）；只有「每轮消耗提示」和「随服务自动拉起」需要 OpenCode —— 详见下方「它怎么用，哪些功能依赖 OpenCode」。
+> Unofficial desktop (Electron) port of the [DSH Whale Balance Widget](https://github.com/MeteorNOX/DeepSeek-Balance-Whale-Widget), with optional OpenCode integration.
+> Balance / today's usage / peak–off-peak countdown work **standalone**; per-turn cost prompts and autostart require OpenCode.
 
 > ## ⚠️ 装了卡巴斯基（或同类主防）请先看这条
 >
