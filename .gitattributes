@@ -1,0 +1,25 @@
+# 统一行尾：仓库内按 LF 存储，Windows 检出时自动转回 CRLF。
+# 上游 vendor/ 里的文件本来就是 LF，这样存储后与上游原文一致，对比差异更干净。
+* text=auto
+
+# 二进制：不要做任何行尾/编码转换
+*.png  binary
+*.gif  binary
+*.jpg  binary
+*.jpeg binary
+*.ico  binary
+*.mp3  binary
+*.wav  binary
+*.woff binary
+*.woff2 binary
+
+# 文本按 LF 存
+*.js    text eol=lf
+*.mjs   text eol=lf
+*.cjs   text eol=lf
+*.json  text eol=lf
+*.jsonc text eol=lf
+*.md    text eol=lf
+*.yml   text eol=lf
+*.html  text eol=lf
+*.css   text eol=lf

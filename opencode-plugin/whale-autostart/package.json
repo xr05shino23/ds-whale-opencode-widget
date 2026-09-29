@@ -1,0 +1,9 @@
+{
+  "name": "whale-autostart",
+  "version": "0.2.0",
+  "private": true,
+  "description": "OpenCode V2 plugin: launch the DeepSeek desktop whale widget on startup",
+  "type": "module",
+  "main": "index.js",
+  "exports": "./index.js"
+}
