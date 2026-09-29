@@ -111,9 +111,11 @@ git push --tags
 | `npm run setup:opencode` | 手动/修复插件登记（幂等）。`--dry-run` 预览 · `--migrate` 清理重复的老条目 · `--remove` 撤销 |
 | `npm run doctor` | 环境自检（含"插件是否已登记"和"二进制在不在"） |
 
-登记策略（**v0.1.3 起调整过**）：① **写 `opencode.json(c)` 的 `plugins` 数组** —— 唯一被实测证明"**全新启动也能加载**"的方式（最小文本插入、保留注释与格式、改前备份成 `opencode.json.bak-<时间戳>`）→ ② 写不了配置时才**复制**到自动发现目录。
+登记策略（**v0.1.3 起**）：① **写两个配置文件的 `plugins` 数组** —— `opencode.json`（服务端插件，**服务启动时**加载）+ `cli.json`（CLI/TUI 插件，**每次启动 TUI 都加载**），缺哪个补哪个（最小文本插入、保留注释与格式、各自备份成 `<文件名>.bak-<时间戳>`）→ ② 写不了配置时才**复制**到自动发现目录。
 
-> ⚠️ **绝对不要用"目录链接 / junction"做登记**：OpenCode 扫自动发现目录时按**真实目录**判断，符号链接会被跳过 —— 热重载能加载、**全新启动扫不到**（v0.1.1/v0.1.2 踩过，用户表现为"重启后不拉起"）。脚本现在会自动清掉旧链接，`doctor` 也会对这种状态明确报警。
+> ⚠️ **两条别踩**：
+> 1. **绝对不要用"目录链接 / junction"做登记** —— OpenCode 扫自动发现目录时按**真实目录**判断，符号链接会被跳过（热重载能加载、**全新启动扫不到**，v0.1.1/v0.1.2 踩过）。
+> 2. **不要只登记一个文件** —— 只写 `opencode.json` 时，用户"**重开 TUI**"不会触发（服务没重启 ✗，v0.1.3 踩过）。两个文件互补，缺一个就少一种触发时机。
 
 维护者注意：
 
@@ -139,8 +141,8 @@ git push --tags
 - [ ] 改过 `scripts/setup-opencode.mjs` / `opencode-plugin/` → 重跑 `npm run test:setup`；并**直接以模块方式跑一次插件**确认启动路径没坏：
       `node -e "import('file:///.../index.js').then(m=>m.default.setup({}))"` → 应生成 `logs/widget.log`，且里面有
       `widget launched pid=… detached=true exe=…`（默认就是 detached；想测非 detached 加 `WHALE_DETACH=0`）
-- [ ] **登记方式必须走数组**：`node -e "console.log(require('fs').readFileSync(process.env.USERPROFILE+'/.config/opencode/opencode.json','utf8'))"` 里应能看到
-      `plugins` 数组里指向本仓库的路径；**不要出现"自动发现目录里的目录链接"**（全新启动会被跳过）
+- [ ] **登记必须两个文件都有**：`opencode.json`（服务端启动时加载）+ `cli.json`（每次启动 TUI 都加载）里都应能看到
+      `plugins` 数组里指向本仓库的路径；**不要出现"自动发现目录里的目录链接"**。`npm run doctor` 会直接告诉你缺哪个
 - [ ] 改过 `scripts/ensure-electron.mjs` → 重跑 `npm run test:electron`
 - [ ] 改过 `src/bridge.mjs` → 重跑 `npm run test:bridge`（并顺手确认长对话下"每轮消耗"还能弹）
 - [ ] 干净克隆验证一遍（见第八节）

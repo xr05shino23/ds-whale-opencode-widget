@@ -1,6 +1,6 @@
 {
   "name": "ds-whale-opencode-widget",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "private": true,
   "description": "Unofficial desktop port of the DSH DeepSeek balance whale widget (Electron), adapted for OpenCode",
   "keywords": [

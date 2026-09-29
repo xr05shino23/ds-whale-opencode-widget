@@ -6,6 +6,36 @@
 
 ---
 
+## v0.1.4（2026-09-30）
+
+### 🐛 修复：「我启动了 opencode，鱼却不来」——只登记 `opencode.json` 时，重开 TUI 不会触发拉起
+
+**现象**（用户实测）：重启 OpenCode（其实是重开 **TUI**）后挂件不出现 ✗。
+
+**根因**：v0.1.3 只把插件登记进 `opencode.json` —— 那是**服务端**插件的加载点，**只在 OpenCode 后台服务启动时跑一次** ✗。而 OpenCode 的架构是"**常驻后台服务 + 客户端**"：用户平时"启动 opencode"启动的是 **TUI 客户端** ✗，服务端（`serve --service`）可能已经连续运行了几个小时 ✗ → 插件不会被重新加载 ✗ → **没人拉起挂件** ✗。
+
+**证据**：`opencode.exe serve --service` 的启动时间是 `02:17`，而用户"重启"的 TUI 是 `03:04`；日志里最近一次 `loading plugin` 停在 `03:03`（那是我 touch 文件手动触发的）✗。
+
+**修法**：同时登记进 **`cli.json`**（OpenCode 的 **CLI/TUI 专用插件**配置 ✗ → 这类插件"**在终端本地运行**"✓）。实测：写入 `cli.json` 后，**每跑一次 CLI/TUI 进程都会加载插件并拉起挂件** ✓✓：
+
+```
+$ opencode plugin list                    ← 一个全新的 CLI 进程
+  whale-autostart  local  E:\大肥鱼插件\opencode-plugin\whale-autostart\index.js
+logs/widget.log → widget launched pid=35080 detached=true   ← 立刻被拉起 ✓
+```
+
+两个登记点**互补**：`opencode.json`（服务启动时 ✓）+ `cli.json`（每次 TUI 启动 ✓）。同时加载不会双开（Electron 单实例锁 ✓）。
+
+### 🔧 其它
+
+- `doctor`：登记判据升级 —— 会分别报告 `opencode.json` / `cli.json` 的覆盖情况；**只登记了一个时会明确提醒**"只重开 TUI 时不会触发拉起（'重开 opencode 没见到鱼'多半就是这个）"✓
+- `setup-opencode`：`--remove` 会同时摘掉两个文件里的条目；登记脚本自测 **46 项**（新增"只缺 `cli.json` 时补上、不动已有的"用例）
+- README：登记表与 FAQ 补上"两种触发时机"的说明
+
+> **教训**：这个坑的本质是我把"OpenCode"当成了一个整体 ✗ —— 实际上它是"常驻服务 + 客户端"，**触发时机取决于插件登记在哪类配置里** ✓。以后凡是"自动拉起"类的需求，都要先问清：**在哪个进程里触发、那个进程什么时候启动** ✓。
+
+---
+
 ## v0.1.3（2026-09-30）
 
 修掉 v0.1.1 / v0.1.2 引入的两个"能用但不可靠"的问题 ✗。两个都是**我的验证方式不严**造成的：登记方式只用"热重载"验过 ✗，`detached` 默认值只想着"少一个 PDM 特征"、没考虑 OpenCode 的插件生命周期 ✗。

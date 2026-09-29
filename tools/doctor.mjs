@@ -316,26 +316,37 @@ function checkOpenCode() {
   } catch { /* 不存在 */ }
 
   let viaConfig = false
-  let listedInDouble = false
-  for (const n of ['opencode.json', 'opencode.jsonc']) {
+  // 两个登记点，触发时机不同（互补）：
+  //   opencode.json → 后台服务启动时加载；cli.json → 每次启动 TUI 都会加载
+  const hasIn = (names) => names.some((n) => {
     const p = path.join(cfgDir, n)
-    if (!fs.existsSync(p)) continue
-    try { if (norm(fs.readFileSync(p, 'utf8')).includes(want)) viaConfig = true } catch { /* ignore */ }
-  }
+    try { return norm(fs.readFileSync(p, 'utf8')).includes(want) } catch { return false }
+  })
+  const viaDoc = hasIn(['opencode.json', 'opencode.jsonc'])
+  const viaCli = hasIn(['cli.json'])
+  viaConfig = viaDoc || viaCli
 
-  if (viaConfig && (viaAuto || viaCopy)) {
-    ok('插件已登记（opencode.json 的 plugins 数组）')
+  if (viaDoc && viaCli && (viaAuto || viaCopy)) {
+    ok('插件已登记（opencode.json + cli.json）', '服务启动 ✓ 与 TUI 启动 ✓ 都会拉起')
     hi('自动发现目录里也有一份', autoDetail,
-      '两处同时生效会重复加载（有单实例锁不会双开，但多一次无用启动）→ npm run setup:opencode -- --migrate 可清掉冗余那份')
-  } else if (viaConfig) {
-    ok('插件已登记（opencode.json 的 plugins 数组）', '全新启动也能加载 ✓')
+      '多余的一份：npm run setup:opencode -- --migrate 可清掉（不会双开，只是多一次无用启动）')
+  } else if (viaDoc && viaCli) {
+    ok('插件已登记（opencode.json + cli.json）', '服务启动 ✓ 与 TUI 启动 ✓ 两种时机都会拉起')
+  } else if (viaDoc) {
+    ok('插件已登记（opencode.json）', 'OpenCode 后台服务启动时会拉起')
+    hi('cli.json 里还没登记', '只重开 TUI 时不会触发拉起（"重开 opencode 没见到鱼"多半就是这个）',
+      'npm run setup:opencode   （补上 cli.json，做到"每次开 TUI 就有鱼"）')
+  } else if (viaCli) {
+    ok('插件已登记（cli.json）', '每次启动 TUI 都会拉起')
+    hi('opencode.json 里还没登记', '后台服务单独启动时不会拉起（影响不大，TUI 那条已覆盖）',
+      'npm run setup:opencode')
   } else if (viaAuto) {
     hi('自动发现目录里是"目录链接" —— 全新启动时会被跳过', autoDetail,
-      'npm run setup:opencode   （改成写 opencode.json 数组 —— 这正是 v0.1.3 修掉的坑）')
+      'npm run setup:opencode   （改成写 opencode.json + cli.json）')
   } else if (viaCopy) {
     ok('插件已登记（自动发现目录 · 副本）', autoDetail)
     hi('副本不随仓库更新', '改了代码或升级版本后，副本还是旧的',
-      'npm run setup:opencode   （会改成写 opencode.json 数组）')
+      'npm run setup:opencode   （会改成写 opencode.json + cli.json）')
   } else {
     no('插件尚未登记', 'OpenCode 启动时不会自动拉起挂件',
       'npm run setup:opencode   （或看 npm run setup:opencode -- --dry-run 先预览）')

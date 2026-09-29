@@ -98,7 +98,7 @@ npm run server
 
 | 顺序 | 做法 | 特点 |
 |---|---|---|
-| ①（默认） | 把插件路径**插入** `opencode.json(c)` 的 `plugins` 数组 | **唯一被实测证明"全新启动也能加载"的方式**；只做最小文本插入（保留注释与格式），改前自动备份 |
+| ①（默认） | 把插件路径**插入两个配置文件的 `plugins` 数组**：<br>`opencode.json`（服务端）+ `cli.json`（CLI/TUI） | **两种触发时机互补**：① 后台服务启动时拉起；② **每次启动 TUI 都会拉起** —— "一开 opencode 就有鱼"靠的是后者。只做最小文本插入（保留注释与格式），两个文件各自备份 |
 | ② | 写不了配置时 → **复制**到自动发现目录 `~/.config/opencode/plugins/whale-autostart` | 真实目录能被扫到；代价是副本不随仓库更新，升级后需重跑一次 setup |
 | ✗ | ~~目录链接 / junction~~ | **已废弃**：OpenCode 扫目录时按"真实目录"判断，符号链接会被跳过 —— 热重载能加载、**全新启动扫不到**（v0.1.3 修掉的坑）。检测到旧链接会自动清掉 |
 
@@ -376,7 +376,9 @@ npm run setup:opencode  # 不在 / 方式不对就自动补上（幂等，可反
 
 登记方式是**写进 `opencode.json(c)` 的 `plugins` 数组** —— 这是唯一实测过"**全新启动也能加载**"的方式。
 
-> ⚠️ **如果你用的是 v0.1.1 / v0.1.2**：那两个版本会往 `~/.config/opencode/plugins/` 放一个**目录链接**，而 OpenCode 扫目录时按"真实目录"判断、**会跳过符号链接** → 表现就是"**重启后不拉起**"（平时热重载却好像正常）。**升级到 v0.1.3，或跑一次 `npm run setup:opencode` 即可修好** —— 它会清掉那个链接、改成写数组。
+> ⚠️ **如果你用的是 v0.1.1 / v0.1.2**：那两个版本会往 `~/.config/opencode/plugins/` 放一个**目录链接**，而 OpenCode 扫目录时按"真实目录"判断、**会跳过符号链接** → 表现就是"**重启后不拉起**"（平时热重载却好像正常）。**升级到 v0.1.3+，或跑一次 `npm run setup:opencode` 即可修好**。
+
+> ⚠️ **如果你用的版本只登记了 `opencode.json`（v0.1.3 及以前）**：它只在 **OpenCode 后台服务启动**时加载 → **你重开 TUI 是不会触发拉起的** ✗（典型的"我明明启动了 opencode，鱼却不来" ✗）。**v0.1.4 起会同时登记 `cli.json`**（TUI 每次启动都会加载 ✓），跑一次 `npm run setup:opencode` 就能补上；`npm run doctor` 也会明确提示 `cli.json 里还没登记`。
 
 想确认真的被加载：看 `~/.local/share/opencode/log/opencode.log` 里有没有 `loading plugin ... whale-autostart`，以及 `logs/widget.log` 里有没有 `widget launched pid=…`。
 

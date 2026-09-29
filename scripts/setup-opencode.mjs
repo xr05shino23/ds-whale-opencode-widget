@@ -207,6 +207,15 @@ function inspect() {
   return { dir, target, state: linkState(target), file: configFile(dir) }
 }
 
+// 登记目标：两个文件，职责不同、互补（详见 doInstall 里的注释）
+function configTargets() {
+  const dir = configDir()
+  return [
+    { file: path.join(dir, 'opencode.json'), why: '服务端插件（后台服务启动时加载）' },
+    { file: path.join(dir, 'cli.json'), why: 'CLI/TUI 插件（每次启动 TUI 都会加载）' },
+  ]
+}
+
 function doInstall() {
   const { dir, target, state, file } = inspect()
   log('挂件插件目录: ' + PLUGIN_DIR)
@@ -228,30 +237,53 @@ function doInstall() {
     if (!DRY) { try { fs.rmSync(target, { force: true }) } catch { /* ignore */ } }
   }
 
+  // —— 登记到哪里（两个文件，职责不同，互补）——
+  //   opencode.json → 服务端插件的加载点：OpenCode **后台服务**启动时跑一次
+  //   cli.json      → CLI/TUI 专用插件的加载点：**每次启动 TUI 都会跑一次** ← 用户真正期望的时机
+  //   （实测：只写 opencode.json 时，重开 TUI 不会触发；两个都写才能"启动 opencode 就见到鱼"）
+  //   两处同时加载不会双开 —— Electron 有单实例锁，后来的会自己退出。
+  const CONFIG_TARGETS = configTargets()
+
   let via = ''
-  let alreadyOk = false   // 已就绪 → 什么都不做
+  let alreadyOk = false
 
   if (FORCE === 'copy') {
     hi('（WHALE_SETUP_FORCE=copy）强制走"复制到自动发现目录"')
     via = 'copy'
-  } else if (configHasEntry(file, posix(PLUGIN_DIR))) {
-    ok('已就绪（opencode.json(c) 的 plugins 数组已登记）')
-    alreadyOk = true
   } else {
-    via = 'config'   // 首选写配置；写失败会自动退回"复制"（见下面 try/catch）
+    const missing = CONFIG_TARGETS.filter((t) => !configHasEntry(t.file, posix(PLUGIN_DIR)))
+    if (!missing.length) {
+      ok('已就绪（opencode.json + cli.json 都已登记）')
+      alreadyOk = true
+    } else {
+      if (missing.length < CONFIG_TARGETS.length) hi('部分已登记，缺的补上：' + missing.map((t) => path.basename(t.file)).join('、'))
+      via = 'config'
+    }
   }
 
-  // ① 首选：写进 opencode.json(c) 的 plugins 数组（唯一被实测证明"全新启动也能加载"的方式）
+  // ① 首选：写进两个配置文件的 plugins 数组（各自动备份；缺哪个补哪个）
   let viaConfig = false
   if (!alreadyOk && via === 'config') {
-    try {
-      fs.mkdirSync(dir, { recursive: true })   // 配置目录可能还不存在（首次新建）
-      const text = readConfig(file) || '{\n}\n'
-      writeConfig(file, insertEntry(text, JSON.stringify(posix(PLUGIN_DIR))), '插入 plugins 条目')
-      viaConfig = true
-    } catch (e) {
-      hi('写配置失败（' + (e && e.message) + '）→ 退回：复制到自动发现目录')
+    let anyOk = false
+    let anyFail = false
+    for (const t of CONFIG_TARGETS) {
+      if (configHasEntry(t.file, posix(PLUGIN_DIR))) { ok('已登记：' + path.basename(t.file) + '（' + t.why + '）'); anyOk = true; continue }
+      try {
+        fs.mkdirSync(path.dirname(t.file), { recursive: true })   // 配置目录可能还不存在（首次新建）
+        const text = readConfig(t.file) || '{\n}\n'
+        writeConfig(t.file, insertEntry(text, JSON.stringify(posix(PLUGIN_DIR))), '插入 plugins 条目 —— ' + t.why)
+        anyOk = true
+      } catch (e) {
+        anyFail = true
+        hi('写 ' + path.basename(t.file) + ' 失败（' + (e && e.message) + '）')
+      }
+    }
+    if (!anyOk) {
+      hi('两个配置文件都写不成 → 退回：复制到自动发现目录')
       via = 'copy'
+    } else {
+      viaConfig = true
+      if (anyFail) hi('有一个文件没写成 —— 另一个已生效（两种触发时机互补，先能用）')
     }
   }
 
@@ -296,7 +328,10 @@ function doInstall() {
   }
 
   log('')
-  log('完成 ✅  下一步：重启 OpenCode（或让它重载插件）即可自动拉起挂件。')
+  log('完成 ✅  已登记到两个地方（互补）：')
+  log('  · opencode.json —— OpenCode 后台服务启动时加载（挂件随服务被拉起）')
+  log('  · cli.json      —— 每次启动 TUI 都会加载（"一开 opencode 就有鱼"靠这条）')
+  log('现在启动 OpenCode（TUI）就应该能看到挂件；想立刻验证也可以 touch 一下插件的 index.js，或 npm start')
   log('撤销：node scripts/setup-opencode.mjs --remove')
   return true
 }
@@ -316,13 +351,15 @@ function doRemove() {
     hi('目标不是本插件的内容，保持不动：' + target)
   }
 
-  // 配置里的条目
-  try {
-    const text = readConfig(file)
-    const nxt = removeEntry(text, posix(PLUGIN_DIR))
-    if (nxt === null) log('  · 配置里没有本插件的条目')
-    else writeConfig(file, nxt, '移除 plugins 条目'), touched = true
-  } catch { /* 配置不存在就算了 */ }
+  // 配置里的条目：opencode.json 与 cli.json 都要摘（两个文件都可能登记过）
+  for (const t of configTargets()) {
+    try {
+      const text = readConfig(t.file)
+      const nxt = removeEntry(text, posix(PLUGIN_DIR))
+      if (nxt === null) log('  · ' + path.basename(t.file) + ' 里没有本插件的条目')
+      else { writeConfig(t.file, nxt, '移除 plugins 条目'); touched = true }
+    } catch { /* 文件不存在就算了 */ }
+  }
 
   log('')
   if (!touched) log('没有需要撤销的内容。')
