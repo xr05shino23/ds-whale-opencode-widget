@@ -3,26 +3,26 @@
 // 为什么需要它：OpenCode 不会自动加载「仓库里的」插件目录，必须有人把它接进去。
 // 以前这一步写在 README 里让用户手工编辑 opencode.json；现在改成自动完成。
 //
-// 三层兜底（从上到下依次尝试，成功即停）：
-//   ① 目录链接：把 opencode-plugin/whale-autostart 链接进 OpenCode 的
-//      【自动发现目录】<配置目录>/plugins/ —— 零配置即被加载，且改代码立即生效（不用复制）。
-//   ② 复制兜底：链接失败（策略 / 权限 / 文件系统不支持）时，复制一份过去。
-//   ③ 配置兜底：复制也失败时，把插件路径【插入】opencode.json(c) 的 plugins 数组
-//      （只做最小文本插入，保留注释与格式；改前自动备份）。
+// 登记策略（v0.1.3 起调整过优先级 —— 原因很重要）：
+//   ① 首选：把插件路径【插入】opencode.json(c) 的 plugins 数组。
+//      只做最小文本插入（保留注释与格式），改前自动备份。
+//   ② 兜底：写不了配置时，复制到【自动发现目录】<配置目录>/plugins/。
+//      真实目录会被扫到；代价是副本不随仓库更新，升级后要重跑一次本脚本。
+//   ✗ 不再使用"目录链接 / junction"：OpenCode 扫目录时按真实目录判断，符号链接会被跳过 ——
+//     实测结果是"热重载能加载、**全新启动扫不到**"，一个会静默失效的陷阱（用户踩到过）。
+//     如果检测到旧版留下的链接，会自动清掉。
 //
 // 用法：
 //   node scripts/setup-opencode.mjs              登记（幂等，可重复跑）
 //   node scripts/setup-opencode.mjs --dry-run    只报告会做什么，不落盘
-//   node scripts/setup-opencode.mjs --migrate    登记 + 顺手清掉配置里重复的老条目
-//                                                （老用户从"手工改 opencode.json"迁过来的那种）
-//   node scripts/setup-opencode.mjs --remove     撤销（删链接/副本，并摘掉配置条目）
+//   node scripts/setup-opencode.mjs --migrate    登记 + 顺手清掉自动发现目录里冗余的旧副本
+//   node scripts/setup-opencode.mjs --remove     撤销（删配置条目/副本，并清掉旧链接）
 //   node scripts/setup-opencode.mjs --soft       postinstall 用：任何失败只警告，退出码恒为 0
 //   node scripts/setup-opencode.mjs --quiet      少输出
 //
 // 环境变量：
 //   WHALE_OPENCODE_CONFIG_DIR   指定 OpenCode 配置目录（默认 ~/.config/opencode）
-//   WHALE_SETUP_FORCE=copy      调试/逃生：强制走第②层（复制）
-//   WHALE_SETUP_FORCE=config    调试/逃生：强制走第③层（写配置）
+//   WHALE_SETUP_FORCE=copy      调试/逃生：强制走第②层（复制到自动发现目录）
 //   WHALE_SKIP_SETUP=1          跳过（postinstall 会尊重它）
 //   CI=1                        跳过（CI 里不去动用户配置）
 import fs from 'node:fs'
@@ -217,106 +217,81 @@ function doInstall() {
     return false
   }
 
-  let via = ''
-  let alreadyOk = false   // 已就绪 → 什么都不做（不要再建一次链接！）
-
-  // ① 链接进自动发现目录
-  if (state.kind === 'link-ok') { ok('已就绪（目录链接 → 自动发现目录）'); alreadyOk = true }
-  else if (state.kind === 'link-other') {
-    hi('链接已存在但指向别处（仓库可能搬过家）→ 重建：' + (state.real || '?'))
-    via = 'link'
-    if (!DRY) { try { fs.rmSync(target, { force: true }) } catch { /* 接着按失败处理 */ } }
-  } else if (state.kind === 'link-broken') {
-    hi('发现失效链接（目标已不存在）→ 重建')
-    via = 'link'
+  // —— 登记策略（v0.1.3 起调整了优先级，原因见文件头）——
+  //   ① 首选：写 opencode.json(c) 的 plugins 数组 —— 唯一被实测证明"全新启动也能加载"的方式
+  //   ② 兜底：复制到自动发现目录（真实目录；会变旧，但至少能被扫到）
+  //   ✗ 不再用"目录链接 / junction"：OpenCode 扫目录时按真实目录判断，符号链接会被跳过 ——
+  //     热重载能加载、**全新启动扫不到**（实测踩到），是个会静默失效的陷阱。发现旧链接就清掉。
+  const isOldLink = state.kind === 'link-ok' || state.kind === 'link-other' || state.kind === 'link-broken'
+  if (isOldLink) {
+    hi('清理旧版留下的目录链接（' + state.kind + '）—— 它在全新启动时会被跳过')
     if (!DRY) { try { fs.rmSync(target, { force: true }) } catch { /* ignore */ } }
-  } else if (state.kind === 'copy-ours') {
-    // 旧版本曾经用过"复制"兜底；链接更好（改代码立即生效、升级不用重跑）。
-    // 认得出是自己的副本（package.json 的 name）才敢删，删完换成链接；换不成再退回刷新副本。
-    hi('发现自己复制过去的副本 → 换成目录链接（更好：改代码立即生效）')
-    via = 'link'
-    if (!DRY) { try { fs.rmSync(target, { recursive: true, force: true }) } catch { /* ignore */ } }
-  } else if (state.kind === 'dir-foreign') {
-    hi('目标已存在，且不是本插件的目录 —— 不碰它，改用配置登记：' + target)
-    via = 'config'
-  } else if (state.kind === 'other') {
-    hi('目标已存在同名文件 —— 不碰它，改用配置登记：' + target)
-    via = 'config'
-  } else {
-    via = 'link'
   }
 
-  // 调试/逃生通道：强制走某一层（用来验证三层兜底都是真能用的，不是摆设）
-  if (FORCE === 'copy' && (via === 'link' || state.kind === 'missing')) {
-    hi('（WHALE_SETUP_FORCE=copy）跳过链接，直接复制')
+  let via = ''
+  let alreadyOk = false   // 已就绪 → 什么都不做
+
+  if (FORCE === 'copy') {
+    hi('（WHALE_SETUP_FORCE=copy）强制走"复制到自动发现目录"')
     via = 'copy'
-  } else if (FORCE === 'config' && (via === 'link' || via === 'copy')) {
-    hi('（WHALE_SETUP_FORCE=config）跳过链接与复制，直接写配置')
-    via = 'config'
+  } else if (configHasEntry(file, posix(PLUGIN_DIR))) {
+    ok('已就绪（opencode.json(c) 的 plugins 数组已登记）')
+    alreadyOk = true
+  } else {
+    via = 'config'   // 首选写配置；写失败会自动退回"复制"（见下面 try/catch）
   }
 
-  if (via === 'link') {
-    if (DRY) ok('[dry-run] 会创建目录链接 ' + target + '  →  ' + PLUGIN_DIR)
+  // ① 首选：写进 opencode.json(c) 的 plugins 数组（唯一被实测证明"全新启动也能加载"的方式）
+  let viaConfig = false
+  if (!alreadyOk && via === 'config') {
+    try {
+      fs.mkdirSync(dir, { recursive: true })   // 配置目录可能还不存在（首次新建）
+      const text = readConfig(file) || '{\n}\n'
+      writeConfig(file, insertEntry(text, JSON.stringify(posix(PLUGIN_DIR))), '插入 plugins 条目')
+      viaConfig = true
+    } catch (e) {
+      hi('写配置失败（' + (e && e.message) + '）→ 退回：复制到自动发现目录')
+      via = 'copy'
+    }
+  }
+
+  // ② 兜底：复制到自动发现目录（真实目录，能被扫到；代价是升级后要重跑一次）
+  if (!alreadyOk && !viaConfig && via === 'copy') {
+    // 安全护栏：那个位置如果是"别人的"目录/文件，绝不覆盖（宁可登记失败，也不删用户的东西）
+    if (state.kind === 'dir-foreign' || state.kind === 'other') {
+      no('自动发现目录里已存在非本插件的内容，不覆盖它：' + target)
+      no('      → 请手动处理那个位置，或用 WHALE_OPENCODE_CONFIG_DIR 指向别的配置目录')
+      return false
+    }
+    if (DRY) ok('[dry-run] 会复制插件到 ' + target)
     else {
       try {
         fs.mkdirSync(path.dirname(target), { recursive: true })
-        fs.symlinkSync(PLUGIN_DIR, target, process.platform === 'win32' ? 'junction' : 'dir')
-        ok('已创建目录链接 → ' + target)
+        fs.rmSync(target, { recursive: true, force: true })
+        fs.cpSync(PLUGIN_DIR, target, { recursive: true, force: true })
+        ok('已复制插件到 ' + target)
+        log('    注意：副本不会随仓库更新，升级后请重新跑一次 npm run setup:opencode')
       } catch (e) {
-        hi('创建链接失败（' + (e && e.code ? e.code : e.message) + '）→ 改用复制')
-        via = 'copy'
+        no('复制也失败（' + (e && e.code ? e.code : e.message) + '）：登记没能完成')
+        return false
       }
     }
   }
 
-  if (via === 'copy' && !DRY) {
-    try {
-      fs.mkdirSync(path.dirname(target), { recursive: true })
-      fs.rmSync(target, { recursive: true, force: true })
-      fs.cpSync(PLUGIN_DIR, target, { recursive: true, force: true })
-      ok('已复制插件到 ' + target)
-      log('    注意：副本不会随仓库更新，升级后请重新跑一次 npm run setup:opencode')
-    } catch (e) {
-      hi('复制失败（' + (e && e.code ? e.code : e.message) + '）→ 改用配置登记')
-      via = 'config'
-    }
-  }
-
-  // ③ 配置登记（仅在 ①② 没成功时做）
-  let viaConfig = false
-  if (!alreadyOk && (via === 'config' || (DRY && via === 'link' && state.kind === 'dir-foreign'))) {
-    try {
-      fs.mkdirSync(dir, { recursive: true })   // 配置目录可能还不存在（首次新建）
-      if (configHasEntry(file, posix(PLUGIN_DIR))) { ok('配置里已登记该插件，无需改动：' + file); viaConfig = true }
-      else {
-        const text = readConfig(file) || '{\n}\n'
-        writeConfig(file, insertEntry(text, JSON.stringify(posix(PLUGIN_DIR))), '插入 plugins 条目')
-        viaConfig = true
+  // 重复登记：数组已经生效（本次刚写入，或本来就有），自动发现目录里还留着旧版本复制过去的副本
+  //   → 默认只提醒（不动用户的文件）；加 --migrate 才把那份副本删掉（数组才是权威登记）
+  if ((alreadyOk || viaConfig) && via !== 'copy') {
+    let ours = false
+    try { ours = JSON.parse(fs.readFileSync(path.join(target, 'package.json'), 'utf8')).name === PLUGIN_NAME } catch { ours = false }
+    if (ours) {
+      if (DRY) hi('提醒：自动发现目录里还有一份副本（dry-run 未改动）：' + target)
+      else if (MIGRATE) {
+        try { fs.rmSync(target, { recursive: true, force: true }); ok('已清掉自动发现目录里的冗余副本：' + target) } catch (e) { hi('清理冗余副本失败：' + (e && e.message)) }
+      } else {
+        hi('提醒：自动发现目录里还有一份旧副本：' + target)
+        hi('      两处同时生效会重复加载（有单实例锁、不会双开，但多一次无用启动）。')
+        hi('      要清理就再跑一次：npm run setup:opencode -- --migrate')
       }
-    } catch (e) {
-      no('写入配置失败：' + (e && e.message))
-      return false
-    }
-  }
-
-  // 双重登记：链接/副本已生效，配置里又列了一遍
-  //   → 默认只提醒（不动用户的文件）；加 --migrate 才顺手清掉那个冗余条目。
-  if (!alreadyOk && !viaConfig && (via === 'link' || via === 'copy') && configHasEntry(file, posix(PLUGIN_DIR))) {
-    if (DRY) {
-      hi('提醒：' + path.basename(file) + ' 的 plugins 数组里也登记了同一路径（dry-run 未改动）')
-    } else if (MIGRATE) {
-      try {
-        const text = readConfig(file)
-        const nxt = removeEntry(text, posix(PLUGIN_DIR))
-        if (nxt === null) hi('配置里找不到可移除的条目（写法特殊？），请手动检查：' + file)
-        else writeConfig(file, nxt, '移除冗余的 plugins 条目（已改用自动发现目录）')
-      } catch (e) {
-        hi('清理冗余条目失败：' + (e && e.message))
-      }
-    } else {
-      hi('提醒：' + path.basename(file) + ' 的 plugins 数组里也登记了同一路径。')
-      hi('      两处同时生效会重复加载（挂件有单实例锁、不会双开，但多一次无用启动）。')
-      hi('      要清理就再跑一次：npm run setup:opencode -- --migrate')
     }
   }
 

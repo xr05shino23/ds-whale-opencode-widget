@@ -9,13 +9,18 @@
 //   触发点就是下面这次 spawn 的参数组合。所以这里几条是硬约束：
 //     · 不传 windowsHide（隐藏启动是最刺眼的特征；挂件本来就要显示窗口，这个 flag 纯属多余）
 //     · 不静默丢弃输出（stdio 落日志文件，而不是 'ignore'）
-//     · 默认不 detached（不脱离父进程）；要"OpenCode 退出后挂件还活着"得显式 WHALE_DETACH=1
 //     · 绝不写注册表自启项 / 计划任务（"autostart" 只是本插件的名字，不是真的去写开机启动）
+//
+// ⚠️ 关于 detached：**默认 detached: true**。原因是实测踩过坑 ——
+//   OpenCode 会在**多个进程**里加载插件（服务端、TUI、每次 CLI 调用…），
+//   若 detached:false，挂件就成了"某个 OpenCode 进程的子进程"，那个进程一退出（例如重启 TUI）
+//   **挂件会被一起带走**，而服务端上的插件并不会因此重新加载 → 没人再把它拉起来（"鱼不见了"）。
+//   想改成非 detached（少一个 PDM 特征、代价是不稳定）就设 WHALE_DETACH=0。
 //
 // 环境变量：
 //   WHALE_DIR        挂件项目根（默认从本文件位置上跳两级；不硬编码盘符）
 //   WHALE_LOG_DIR    日志目录（默认 <项目根>/logs）
-//   WHALE_DETACH=1   让挂件脱离父进程（OpenCode 退出后仍存活 —— 旧行为，会多一个 PDM 特征）
+//   WHALE_DETACH=0   不让挂件脱离父进程（少一个特征，但会随加载插件的那次进程退出而消失）
 import { spawn } from 'node:child_process'
 import fs from 'node:fs'
 import path from 'node:path'
@@ -36,7 +41,8 @@ const HERE = path.dirname(fileURLToPath(import.meta.url))
 const WHALE_DIR = process.env.WHALE_DIR || path.resolve(HERE, '..', '..')
 const LOG_DIR = process.env.WHALE_LOG_DIR || path.join(WHALE_DIR, 'logs')
 const LOG_FILE = path.join(LOG_DIR, 'widget.log')
-const DETACH = process.env.WHALE_DETACH === '1'
+// 默认 detached（见文件头说明）：只有显式 WHALE_DETACH=0 才不脱离父进程
+const DETACH = process.env.WHALE_DETACH !== '0'
 
 // 插件日志：同时写插件日志文件（持久、可事后排查）与宿主 stdout（OpenCode 日志里能看到）。
 // 以前是 console 完就算了 —— 但挂件由 OpenCode 拉起时，宿主 stdout 未必有人看，

@@ -136,7 +136,9 @@ git push --tags
 - [ ] **动过 Electron 版本 → 必须重跑 `npm run doctor` + `npm run health`**，并把实测版本同步进 README「已知限制」
 - [ ] 改过 `scripts/setup-opencode.mjs` / `opencode-plugin/` → 重跑 `npm run test:setup`；并**直接以模块方式跑一次插件**确认启动路径没坏：
       `node -e "import('file:///.../index.js').then(m=>m.default.setup({}))"` → 应生成 `logs/widget.log`，且里面有
-      `widget launched pid=… detached=false exe=…`
+      `widget launched pid=… detached=true exe=…`（默认就是 detached；想测非 detached 加 `WHALE_DETACH=0`）
+- [ ] **登记方式必须走数组**：`node -e "console.log(require('fs').readFileSync(process.env.USERPROFILE+'/.config/opencode/opencode.json','utf8'))"` 里应能看到
+      `plugins` 数组里指向本仓库的路径；**不要出现"自动发现目录里的目录链接"**（全新启动会被跳过）
 - [ ] 改过 `scripts/ensure-electron.mjs` → 重跑 `npm run test:electron`
 - [ ] 改过 `src/bridge.mjs` → 重跑 `npm run test:bridge`（并顺手确认长对话下"每轮消耗"还能弹）
 - [ ] 干净克隆验证一遍（见第八节）

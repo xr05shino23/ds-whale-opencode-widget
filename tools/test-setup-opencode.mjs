@@ -1,5 +1,10 @@
-// 本地回归测试（不入库）：验证 scripts/setup-opencode.mjs 的三层兜底 + 撤销
-// 用法： node _private/test-setup-opencode.mjs
+// 本地回归测试（不入库）：验证 scripts/setup-opencode.mjs 的登记策略与安全底线
+// 用法： node tools/test-setup-opencode.mjs
+//
+// v0.1.3 起登记策略变了（原因见脚本头部注释）：
+//   ① 首选写 opencode.json(c) 的 plugins 数组（唯一被实测证明"全新启动也能加载"）
+//   ② 兜底才复制到自动发现目录
+//   ✗ 不再用目录链接/junction（全新启动会被跳过）→ 发现旧链接要清掉
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
@@ -28,103 +33,93 @@ function run(args = [], env = {}) {
   }
 }
 
-function freshDir() {
-  const d = fs.mkdtempSync(path.join(os.tmpdir(), 'whale-setup-test-'))
-  return d
+const freshDir = () => fs.mkdtempSync(path.join(os.tmpdir(), 'whale-setup-test-'))
+const readCfg = (cfg) => {
+  const f = path.join(cfg, 'opencode.json')
+  try { return fs.readFileSync(f, 'utf8').replace(/^\uFEFF/, '') } catch { return '' }
 }
+const pluginsOf = (cfg) => { try { return JSON.parse(readCfg(cfg)).plugins } catch { return null } }
+const autoTarget = (cfg) => path.join(cfg, 'plugins', 'whale-autostart')
 
 // ---------------------------------------------------------------------------
-// T1 默认 → 目录链接
+// T1 默认 = 写配置数组（首选）；幂等；不再产生任何链接/副本
 // ---------------------------------------------------------------------------
 {
   const cfg = freshDir()
-  run([], { WHALE_OPENCODE_CONFIG_DIR: cfg })
-  const t = path.join(cfg, 'plugins', 'whale-autostart')
-  const st = fs.lstatSync(t)
-  say(st.isSymbolicLink(), 'T1 默认走①：创建了目录链接', t)
-  const real = fs.realpathSync(t)
-  say(path.resolve(real).toLowerCase() === path.resolve(PLUGIN).toLowerCase(), 'T1 链接指向挂件插件目录')
-  say(fs.existsSync(path.join(t, 'index.js')) && fs.existsSync(path.join(t, 'package.json')), 'T1 经链接能读到 index.js / package.json')
+  const out = run([], { WHALE_OPENCODE_CONFIG_DIR: cfg })
+  say(pluginsOf(cfg) && pluginsOf(cfg).length === 1 && /whale-autostart$/.test(pluginsOf(cfg)[0]),
+    'T1 默认走①：插件路径写进了 plugins 数组', JSON.stringify(pluginsOf(cfg)))
+  say(!fs.existsSync(autoTarget(cfg)), 'T1 没有在自动发现目录里留链接/副本（不需要）')
+  say(/已更新/.test(out) && /插入 plugins 条目/.test(out), 'T1 输出了"插入 plugins 条目"')
 
-  // 幂等：再跑一次不应报错、也不该重复创建，更**不该把链接降级成副本**
   const again = run([], { WHALE_OPENCODE_CONFIG_DIR: cfg })
   say(/已就绪/.test(again), 'T1 幂等：第二次运行识别为已就绪')
-  say(!/创建链接失败/.test(again), 'T1 幂等：没有再去重复创建链接（避免 EEXIST 掉进复制兜底）')
-  say(fs.lstatSync(t).isSymbolicLink(), 'T1 幂等：跑第二遍之后链接**仍然是链接**（这条曾经漏测，导致真把链接换成了副本）')
+  say(pluginsOf(cfg).length === 1, 'T1 幂等：数组里没有重复条目', JSON.stringify(pluginsOf(cfg)))
+  say(!fs.existsSync(autoTarget(cfg)), 'T1 幂等：仍然没有多出副本')
   fs.rmSync(cfg, { recursive: true, force: true })
 }
 
 // ---------------------------------------------------------------------------
-// T2 强制走② → 复制
+// T2 强制走②：复制到自动发现目录（真实目录，能被扫到）
 // ---------------------------------------------------------------------------
 {
   const cfg = freshDir()
   run([], { WHALE_OPENCODE_CONFIG_DIR: cfg, WHALE_SETUP_FORCE: 'copy' })
-  const t = path.join(cfg, 'plugins', 'whale-autostart')
-  const st = fs.lstatSync(t)
-  say(!st.isSymbolicLink() && st.isDirectory(), 'T2 强制走②：是真实目录（复制）')
-  say(fs.existsSync(path.join(t, 'index.js')), 'T2 复制内容完整（index.js 在位）')
-  // 再跑一次：应识别为"我们的副本"并刷新，不报错
+  const t = autoTarget(cfg)
+  const st = fs.existsSync(t) ? fs.lstatSync(t) : null
+  say(!!st && st.isDirectory() && !st.isSymbolicLink(), 'T2 强制走②：是真实目录（不是链接）')
+  say(fs.existsSync(path.join(t, 'index.js')) && fs.existsSync(path.join(t, 'package.json')), 'T2 复制内容完整')
+  say(!pluginsOf(cfg) || pluginsOf(cfg).length === 0, 'T2 此时没有往配置里塞条目（走的是②）')
   const again = run([], { WHALE_OPENCODE_CONFIG_DIR: cfg, WHALE_SETUP_FORCE: 'copy' })
   say(!/失败/.test(again), 'T2 幂等：重复运行不报失败')
   fs.rmSync(cfg, { recursive: true, force: true })
 }
 
 // ---------------------------------------------------------------------------
-// T3 强制走③ → 写配置（三种起点：无文件 / 空对象 / 已有 plugins 数组）
+// T3 配置文件的三种起点（无文件 / 空对象 / JSONC 带注释与 CRLF）
 // ---------------------------------------------------------------------------
 {
   // 3a 完全没有配置文件
   const cfg = freshDir()
-  run([], { WHALE_OPENCODE_CONFIG_DIR: cfg, WHALE_SETUP_FORCE: 'config' })
+  run([], { WHALE_OPENCODE_CONFIG_DIR: cfg })
   const f = path.join(cfg, 'opencode.json')
-  say(fs.existsSync(f), 'T3a 走③：新建了配置文件')
-  let j = null
-  try { j = JSON.parse(fs.readFileSync(f, 'utf8')) } catch (e) { say(false, 'T3a 生成的配置是合法 JSON', e.message) }
-  if (j) say(Array.isArray(j.plugins) && j.plugins.length === 1 && /whale-autostart$/.test(j.plugins[0]), 'T3a plugins 数组正确', JSON.stringify(j.plugins))
+  say(fs.existsSync(f), 'T3a 新建了配置文件')
+  try {
+    const j = JSON.parse(fs.readFileSync(f, 'utf8'))
+    say(Array.isArray(j.plugins) && j.plugins.length === 1, 'T3a 生成的是严格合法 JSON', JSON.stringify(j.plugins))
+  } catch (e) { say(false, 'T3a 严格 JSON 解析', e.message) }
   fs.rmSync(cfg, { recursive: true, force: true })
 
   // 3b 空对象 {}
   const cfg2 = freshDir()
   fs.writeFileSync(path.join(cfg2, 'opencode.json'), '{\n}\n')
-  run([], { WHALE_OPENCODE_CONFIG_DIR: cfg2, WHALE_SETUP_FORCE: 'config' })
-  const f2 = path.join(cfg2, 'opencode.json')
+  run([], { WHALE_OPENCODE_CONFIG_DIR: cfg2 })
   try {
-    const j2 = JSON.parse(fs.readFileSync(f2, 'utf8'))
+    const j2 = JSON.parse(readCfg(cfg2))
     say(Array.isArray(j2.plugins) && j2.plugins.length === 1, 'T3b 空对象：插入后仍是合法 JSON', JSON.stringify(j2.plugins))
   } catch (e) { say(false, 'T3b 空对象：插入后仍是合法 JSON', e.message) }
   fs.rmSync(cfg2, { recursive: true, force: true })
 
-  // 3c 已有其它插件（CRLF + 注释 —— JSONC 风格）
+  // 3c 已有其它插件 + 注释 + CRLF
   const cfg3 = freshDir()
-  const fixture = [
-    '{',
-    '  // 用户的注释：不要弄丢我',
-    '  "model": "deepseek/deepseek-flash",',
-    '  "plugins": [',
-    '    "some-other-plugin"',
-    '  ]',
-    '}',
-    '',
-  ].join('\r\n')
+  const fixture = ['{', '  // 用户的注释：不要弄丢我', '  "model": "deepseek/deepseek-flash",', '  "plugins": [', '    "some-other-plugin"', '  ]', '}', ''].join('\r\n')
   fs.writeFileSync(path.join(cfg3, 'opencode.json'), fixture)
-  run([], { WHALE_OPENCODE_CONFIG_DIR: cfg3, WHALE_SETUP_FORCE: 'config' })
-  const f3 = path.join(cfg3, 'opencode.json')
-  const after = fs.readFileSync(f3, 'utf8')
+  run([], { WHALE_OPENCODE_CONFIG_DIR: cfg3 })
+  const after = readCfg(cfg3)
   say(after.includes('// 用户的注释：不要弄丢我'), 'T3c JSONC：注释被保留')
   say(after.includes('"some-other-plugin"'), 'T3c 别人的插件条目被保留')
   say(/\r\n/.test(after) && !/[^\r]\n/.test(after), 'T3c CRLF 行尾保持一致')
   try {
     const j3 = JSON.parse(after.replace(/^\s*\/\/.*$/gm, ''))
-    say(j3.plugins.length === 2 && /whale-autostart$/.test(j3.plugins[1]), 'T3c 数组里两个条目且顺序正确', JSON.stringify(j3.plugins))
-  } catch (e) { say(false, 'T3c 去注释后可解析为 JSON', e.message) }
+    say(j3.plugins.length === 2 && /whale-autostart$/.test(j3.plugins[1]), 'T3c 两个条目且顺序正确', JSON.stringify(j3.plugins))
+  } catch (e) { say(false, 'T3c 去注释后可解析', e.message) }
   say(fs.readdirSync(cfg3).some((n) => n.includes('.bak-')), 'T3c 改配置前留了备份')
 
-  // 3d 幂等 + 撤销只摘自己的
-  const again3 = run([], { WHALE_OPENCODE_CONFIG_DIR: cfg3, WHALE_SETUP_FORCE: 'config' })
-  say(/已登记/.test(again3), 'T3d 幂等：识别为已登记，不重复插入')
+  // 3d 幂等 + 撤销（只摘自己的）
+  const again3 = run([], { WHALE_OPENCODE_CONFIG_DIR: cfg3 })
+  say(/已就绪/.test(again3), 'T3d 幂等：识别为已登记，不重复插入')
   run(['--remove'], { WHALE_OPENCODE_CONFIG_DIR: cfg3 })
-  const after3 = fs.readFileSync(f3, 'utf8')
+  const after3 = readCfg(cfg3)
   say(after3.includes('"some-other-plugin"'), 'T3d 撤销：别人的条目仍在')
   say(!after3.includes('whale-autostart'), 'T3d 撤销：我们的条目已摘掉')
   say(after3.includes('// 用户的注释：不要弄丢我'), 'T3d 撤销：注释仍在')
@@ -133,36 +128,39 @@ function freshDir() {
 }
 
 // ---------------------------------------------------------------------------
-// T4 撤销链接
+// T4 --remove 也能清掉第②层留下的副本
 // ---------------------------------------------------------------------------
 {
   const cfg = freshDir()
-  run([], { WHALE_OPENCODE_CONFIG_DIR: cfg })
-  const t = path.join(cfg, 'plugins', 'whale-autostart')
+  run([], { WHALE_OPENCODE_CONFIG_DIR: cfg, WHALE_SETUP_FORCE: 'copy' })
+  say(fs.existsSync(autoTarget(cfg)), 'T4 前置：副本已创建')
   run(['--remove'], { WHALE_OPENCODE_CONFIG_DIR: cfg })
-  say(!fs.existsSync(t), 'T4 --remove 删掉了链接')
+  say(!fs.existsSync(autoTarget(cfg)), 'T4 --remove 删掉了副本')
+  say((pluginsOf(cfg) || []).length === 0, 'T4 配置里也没有条目')
   fs.rmSync(cfg, { recursive: true, force: true })
 }
 
 // ---------------------------------------------------------------------------
-// T5 不碰用户自己的同名目录（安全底线）
+// T5 安全底线：那个位置是"别人的目录"时，绝不覆盖
 // ---------------------------------------------------------------------------
 {
   const cfg = freshDir()
-  const t = path.join(cfg, 'plugins', 'whale-autostart')
+  const t = autoTarget(cfg)
   fs.mkdirSync(t, { recursive: true })
   fs.writeFileSync(path.join(t, '我的东西.txt'), '别删我')
   const out = run([], { WHALE_OPENCODE_CONFIG_DIR: cfg })
-  say(fs.existsSync(path.join(t, '我的东西.txt')), 'T5 陌生同名目录：内容没被动过')
-  say(/不是本插件的目录/.test(out), 'T5 并明确提示不会碰它')
-  say(fs.readFileSync(path.join(cfg, 'opencode.json'), 'utf8').includes('whale-autostart'), 'T5 自动改走③：写进配置')
-  run(['--remove'], { WHALE_OPENCODE_CONFIG_DIR: cfg })
-  say(fs.existsSync(path.join(t, '我的东西.txt')), 'T5 --remove 也不会删用户自己的目录')
+  say(fs.existsSync(path.join(t, '我的东西.txt')), 'T5 陌生同名目录：内容没被动过（默认走配置、根本不碰它）')
+  say((pluginsOf(cfg) || []).includes(path.join(PLUGIN).split(path.sep).join('/')), 'T5 且登记成功了（走的是①）')
+
+  // 强制走②时也要拦住
+  const out2 = run([], { WHALE_OPENCODE_CONFIG_DIR: cfg, WHALE_SETUP_FORCE: 'copy' })
+  say(fs.existsSync(path.join(t, '我的东西.txt')), 'T5 强制走②时：仍然没动别人的目录')
+  say(/不覆盖它/.test(out2), 'T5 并明确报出"不覆盖它"')
   fs.rmSync(cfg, { recursive: true, force: true })
 }
 
 // ---------------------------------------------------------------------------
-// T6 postinstall 的 --soft：配置目录不可用时也必须退出码 0
+// T6 postinstall 的 --soft：任何失败都必须退出码 0
 // ---------------------------------------------------------------------------
 {
   const out = run(['--soft'], { WHALE_OPENCODE_CONFIG_DIR: path.join(os.tmpdir(), 'no-such-parent-' + Date.now(), 'deep', 'oc') })
@@ -170,36 +168,53 @@ function freshDir() {
 }
 
 // ---------------------------------------------------------------------------
-// T7 发现自己复制过去的副本 → 应该换成链接（链接更好：改代码立即生效）
+// T7 迁移：旧版留下的 junction 会被清掉，并改走数组（这是本次修的核心 bug）
 // ---------------------------------------------------------------------------
 {
   const cfg = freshDir()
-  const t = path.join(cfg, 'plugins', 'whale-autostart')
-  fs.mkdirSync(t, { recursive: true })
-  fs.writeFileSync(path.join(t, 'package.json'), JSON.stringify({ name: 'whale-autostart', version: '0.0.0', main: 'index.js' }))
-  fs.writeFileSync(path.join(t, 'index.js'), '// 旧副本')
-  say(!fs.lstatSync(t).isSymbolicLink(), 'T7 前置：现在是"副本"（真实目录）')
-  run([], { WHALE_OPENCODE_CONFIG_DIR: cfg })
-  say(fs.lstatSync(t).isSymbolicLink(), 'T7 副本被换成链接')
-  say(path.resolve(fs.realpathSync(t)).toLowerCase() === path.resolve(PLUGIN).toLowerCase(), 'T7 链接指向仓库插件目录')
+  const t = autoTarget(cfg)
+  fs.mkdirSync(path.dirname(t), { recursive: true })
+  fs.symlinkSync(PLUGIN, t, process.platform === 'win32' ? 'junction' : 'dir')
+  say(fs.lstatSync(t).isSymbolicLink(), 'T7 前置：自动发现目录里是一个链接（旧版行为）')
+  const out = run([], { WHALE_OPENCODE_CONFIG_DIR: cfg })
+  say(!fs.existsSync(t), 'T7 旧链接被清掉了')
+  say(/清理旧版留下的目录链接/.test(out), 'T7 并明确报告清理动作')
+  say((pluginsOf(cfg) || []).length === 1, 'T7 改用数组登记', JSON.stringify(pluginsOf(cfg)))
   fs.rmSync(cfg, { recursive: true, force: true })
 }
 
 // ---------------------------------------------------------------------------
-// T8 配置文件带 BOM（PowerShell/记事本写的常见）→ 写回时应去掉 BOM 且仍是合法 JSON
+// T8 配置文件带 BOM（PowerShell/记事本写的常见）→ 写回时不带 BOM 且仍是合法 JSON
 // ---------------------------------------------------------------------------
 {
   const cfg = freshDir()
   const f = path.join(cfg, 'opencode.json')
   fs.writeFileSync(f, '\uFEFF{\r\n  "plugins": [\r\n    "some-other-plugin"\r\n  ]\r\n}\r\n')
-  run([], { WHALE_OPENCODE_CONFIG_DIR: cfg, WHALE_SETUP_FORCE: 'config' })
+  run([], { WHALE_OPENCODE_CONFIG_DIR: cfg })
   const after = fs.readFileSync(f, 'utf8')
   say(!after.startsWith('\uFEFF'), 'T8 写回后不带 BOM')
   say(after.includes('"some-other-plugin"'), 'T8 别人的条目保留')
   try {
     const j = JSON.parse(after)
-    say(j.plugins.length === 2 && /whale-autostart$/.test(j.plugins[1]), 'T8 去 BOM 后是严格合法 JSON（可被 JSON.parse 解析）', JSON.stringify(j.plugins))
+    say(j.plugins.length === 2, 'T8 去 BOM 后是严格合法 JSON', JSON.stringify(j.plugins))
   } catch (e) { say(false, 'T8 严格 JSON 解析', e.message) }
+  fs.rmSync(cfg, { recursive: true, force: true })
+}
+
+// ---------------------------------------------------------------------------
+// T9 数组 + 自动发现目录里的旧副本同时存在：默认只提醒，--migrate 才清副本
+// ---------------------------------------------------------------------------
+{
+  const cfg = freshDir()
+  fs.mkdirSync(autoTarget(cfg), { recursive: true })
+  fs.writeFileSync(path.join(autoTarget(cfg), 'package.json'), JSON.stringify({ name: 'whale-autostart', version: '0.0.0', main: 'index.js' }))
+  fs.writeFileSync(path.join(autoTarget(cfg), 'index.js'), '// 旧副本')
+  const out = run([], { WHALE_OPENCODE_CONFIG_DIR: cfg })
+  say(fs.existsSync(autoTarget(cfg)), 'T9 默认：不擅自删除那份副本')
+  say(/还有一份旧副本/.test(out) && /--migrate/.test(out), 'T9 默认：提醒 + 给出清理命令')
+  run(['--migrate'], { WHALE_OPENCODE_CONFIG_DIR: cfg })
+  say(!fs.existsSync(autoTarget(cfg)), 'T9 --migrate：冗余副本被清掉')
+  say((pluginsOf(cfg) || []).length === 1, 'T9 数组登记仍在', JSON.stringify(pluginsOf(cfg)))
   fs.rmSync(cfg, { recursive: true, force: true })
 }
 

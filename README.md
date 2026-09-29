@@ -96,18 +96,18 @@ npm run server
 
 它是怎么登记的（三层兜底，从上到下，成功即停）：
 
-| 层 | 做法 | 特点 |
+| 顺序 | 做法 | 特点 |
 |---|---|---|
-| ①（默认） | 在 OpenCode 的**自动发现目录** `~/.config/opencode/plugins/whale-autostart` 建一个**目录链接**指向本仓库的插件目录 | 零配置被加载；改代码立即生效，不用复制 |
-| ② | 链接失败（策略/权限/文件系统不支持）→ **复制**一份过去 | 能跑；升级代码后需重跑一次 setup（**再跑一次会自动把副本换成链接**） |
-| ③ | 复制也失败 → 把插件路径**插入** `opencode.json(c)` 的 `plugins` 数组 | 只做最小文本插入（保留注释与格式），改前自动备份 |
+| ①（默认） | 把插件路径**插入** `opencode.json(c)` 的 `plugins` 数组 | **唯一被实测证明"全新启动也能加载"的方式**；只做最小文本插入（保留注释与格式），改前自动备份 |
+| ② | 写不了配置时 → **复制**到自动发现目录 `~/.config/opencode/plugins/whale-autostart` | 真实目录能被扫到；代价是副本不随仓库更新，升级后需重跑一次 setup |
+| ✗ | ~~目录链接 / junction~~ | **已废弃**：OpenCode 扫目录时按"真实目录"判断，符号链接会被跳过 —— 热重载能加载、**全新启动扫不到**（v0.1.3 修掉的坑）。检测到旧链接会自动清掉 |
 
 需要手动处理时（例如**仓库搬家后链接会失效**）：
 
 ```bash
-npm run setup:opencode                 # 幂等，可反复跑；会自愈失效链接
+npm run setup:opencode                 # 幂等，可反复跑（会自动清掉旧版留下的、会静默失效的目录链接）
 npm run setup:opencode -- --dry-run     # 先看它准备做什么
-npm run setup:opencode -- --migrate     # 顺手清掉配置里重复的老条目
+npm run setup:opencode -- --migrate     # 顺手清掉自动发现目录里冗余的旧副本
 npm run setup:opencode -- --remove      # 撤销（重启 OpenCode 后不再自动拉起）
 ```
 
@@ -202,7 +202,7 @@ node scripts/fetch-assets.mjs --force  # 覆盖已存在的素材
 | `OPENCODE_BIN` | 自动查找 | 指定 `opencode.exe` 路径（仅在自动发现失败时需要） |
 | `WHALE_DIR` | 自动推导 | 挂件项目根目录（OpenCode 插件用；默认从插件位置上跳两级） |
 | `WHALE_LOG_DIR` | `<项目根>/logs` | 插件拉起挂件时的日志目录（默认写 `logs/widget.log`） |
-| `WHALE_DETACH` | — | 设 `1` 时挂件**脱离父进程**（OpenCode 退出后仍存活；默认不脱离，更"不像木马"）。**默认行为下，OpenCode 一关，挂件也会跟着退出**（实测日志：`widget exited code=0`）—— 想让它常驻就设 `WHALE_DETACH=1` |
+| `WHALE_DETACH` | 脱离父进程（默认**开**） | 设 `0` 时挂件不脱离父进程。**默认开是有原因的**：OpenCode 会在多个进程里加载插件（服务端 / TUI / 每次 CLI 调用），不脱离父进程的话，**那个进程一退出鱼就被一起带走**，而且不会自动回来（实测踩过）。想换回非 detached 就设 `WHALE_DETACH=0` |
 | `WHALE_OPENCODE_CONFIG_DIR` | `~/.config/opencode` | OpenCode 配置目录（`setup:opencode` 登记与 `doctor` 检查用；配置目录不在默认位置时设它） |
 | `WHALE_SKIP_SETUP` | — | 设 `1` 时 `npm install` 不再自动登记 OpenCode 插件、也不补跑 Electron 二进制 |
 | `WHALE_ENSURE_TIMEOUT_MS` | `60000` | 安装期补跑 `electron/install.js` 的时间上限（毫秒） |
@@ -282,7 +282,7 @@ npm run doctor -- --fix     # 自动 git restore 恢复（只动 git 跟踪的�
 
 > ⚠️ 受信任程序条目里**务必勾选「不监控应用程序活动」**（该选项作用于"主机入侵防御 / 漏洞利用防御 / 行为检测 / 修复引擎"）—— 这是挡住 PDM 的关键，不勾等于没加。
 
-**为降低误报，本项目从 v0.1.2 起做的改动**：插件拉起挂件时**不再隐藏窗口**（去掉 `windowsHide`）、子进程输出**落日志**（`logs/widget.log`）、**默认不脱离父进程**（想常驻设 `WHALE_DETACH=1`）。详见 [`CHANGELOG.md`](CHANGELOG.md) 与 [`AGENTS.md`](AGENTS.md)。
+**为降低误报，本项目从 v0.1.2 起做的改动**：插件拉起挂件时**不再隐藏窗口**（去掉 `windowsHide`）、子进程输出**落日志**（`logs/widget.log`）；安全软件禁止的是"隐藏 + 静默 + 脱离父进程"**三者同时出现**，现在只剩 `detached` 一项（而且它是**必须保留**的 —— 见上表 `WHALE_DETACH` 的说明）。详见 [`CHANGELOG.md`](CHANGELOG.md) 与 [`AGENTS.md`](AGENTS.md)。
 
 ---
 
@@ -370,11 +370,15 @@ npm run doctor          # 会报出「目录含显式 DENY 权限 / 强制性完
 先确认插件登记还在（**仓库搬家**、动过配置都会导致失效）：
 
 ```bash
-npm run doctor          # 看「插件已登记」一项
-npm run setup:opencode  # 不在就自动补上（幂等，可反复跑）
+npm run doctor          # 看「插件已登记」一项，以及它用的是哪种登记方式
+npm run setup:opencode  # 不在 / 方式不对就自动补上（幂等，可反复跑）
 ```
 
-它会在 `~/.config/opencode/plugins/whale-autostart` 建一个指向本仓库的目录链接 —— 这是 OpenCode 的**自动发现目录**，不需要改 `opencode.json`。想确认是否真被加载：看 `~/.local/share/opencode/log/opencode.log` 里有没有 `loading plugin ... whale-autostart`。
+登记方式是**写进 `opencode.json(c)` 的 `plugins` 数组** —— 这是唯一实测过"**全新启动也能加载**"的方式。
+
+> ⚠️ **如果你用的是 v0.1.1 / v0.1.2**：那两个版本会往 `~/.config/opencode/plugins/` 放一个**目录链接**，而 OpenCode 扫目录时按"真实目录"判断、**会跳过符号链接** → 表现就是"**重启后不拉起**"（平时热重载却好像正常）。**升级到 v0.1.3，或跑一次 `npm run setup:opencode` 即可修好** —— 它会清掉那个链接、改成写数组。
+
+想确认真的被加载：看 `~/.local/share/opencode/log/opencode.log` 里有没有 `loading plugin ... whale-autostart`，以及 `logs/widget.log` 里有没有 `widget launched pid=…`。
 
 **我是 OpenCode 桌面版 / Web 版用户，挂件能连上吗？**
 **能，原则上不需要任何适配。** 官方文档写明：Web UI 与 TUI **由同一个服务提供**（桌面 App 通过 `opencode pair` 或填服务器地址连过去的也是它）。而本插件的用量桥读的是**那个服务**的 API，不是某个客户端，所以 TUI / Web / 桌面 App 都通用。

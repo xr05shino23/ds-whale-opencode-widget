@@ -323,19 +323,19 @@ function checkOpenCode() {
     try { if (norm(fs.readFileSync(p, 'utf8')).includes(want)) viaConfig = true } catch { /* ignore */ }
   }
 
-  if (viaAuto && viaConfig) {
-    ok('插件已登记', autoDetail)
-    hi('配置里也登记了同一路径', '两处同时生效可能重复加载（挂件双开）',
-      '建议只留一处：删掉 opencode.json(c) 里 plugins 数组的那一行，或删掉 ' + autoPath)
+  if (viaConfig && (viaAuto || viaCopy)) {
+    ok('插件已登记（opencode.json 的 plugins 数组）')
+    hi('自动发现目录里也有一份', autoDetail,
+      '两处同时生效会重复加载（有单实例锁不会双开，但多一次无用启动）→ npm run setup:opencode -- --migrate 可清掉冗余那份')
+  } else if (viaConfig) {
+    ok('插件已登记（opencode.json 的 plugins 数组）', '全新启动也能加载 ✓')
   } else if (viaAuto) {
-    ok('插件已登记（自动发现目录 · 链接）', autoDetail)
+    hi('自动发现目录里是"目录链接" —— 全新启动时会被跳过', autoDetail,
+      'npm run setup:opencode   （改成写 opencode.json 数组 —— 这正是 v0.1.3 修掉的坑）')
   } else if (viaCopy) {
     ok('插件已登记（自动发现目录 · 副本）', autoDetail)
-    hi('这是"复制"登记，不随仓库更新', '改了代码/升级版本后副本还是旧的',
-      'npm run setup:opencode   （它会自动把副本换成链接）')
-  } else if (viaConfig) {
-    ok('插件已登记（opencode.json 的 plugins 数组）')
-    if (autoDetail) hi('自动发现目录里有个指向别处的同名目录', autoDetail)
+    hi('副本不随仓库更新', '改了代码或升级版本后，副本还是旧的',
+      'npm run setup:opencode   （会改成写 opencode.json 数组）')
   } else {
     no('插件尚未登记', 'OpenCode 启动时不会自动拉起挂件',
       'npm run setup:opencode   （或看 npm run setup:opencode -- --dry-run 先预览）')
