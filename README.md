@@ -380,6 +380,10 @@ npm run setup:opencode  # 不在 / 方式不对就自动补上（幂等，可反
 
 想确认真的被加载：看 `~/.local/share/opencode/log/opencode.log` 里有没有 `loading plugin ... whale-autostart`，以及 `logs/widget.log` 里有没有 `widget launched pid=…`。
 
+> 💡 **两个行为要知道**（都属正常，不是 bug）：
+> - **挂件只在"插件被加载"时被拉起** —— 如果你**手动退出过挂件**（托盘 → 退出），它不会自己回来，要等下一次 OpenCode 启动 / 插件重载，或者自己跑 `npm start`。
+> - **同时只允许一只**：重复拉起会被 Electron 的单实例锁挡掉（日志里表现为 `singleInstanceLock = false` + `widget exited code=0`），这是防止双开的设计。
+
 **我是 OpenCode 桌面版 / Web 版用户，挂件能连上吗？**
 **能，原则上不需要任何适配。** 官方文档写明：Web UI 与 TUI **由同一个服务提供**（桌面 App 通过 `opencode pair` 或填服务器地址连过去的也是它）。而本插件的用量桥读的是**那个服务**的 API，不是某个客户端，所以 TUI / Web / 桌面 App 都通用。
 
