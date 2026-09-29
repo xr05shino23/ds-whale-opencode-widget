@@ -3,6 +3,12 @@
 > **非官方**的「小鲸鱼余额挂件」**桌面版（Electron）** + **OpenCode 适配**。
 > Unofficial desktop (Electron) + OpenCode port of the [DSH Whale Balance Widget](https://github.com/MeteorNOX/DeepSeek-Balance-Whale-Widget).
 
+<p align="center">
+  <img src="docs/images/whale-bubble.png" alt="小鲸鱼挂件运行截图" width="300">
+</p>
+
+<p align="center"><i>桌面右下角的小鲸鱼：点它换一屏（余额 / 今日已用 / 峰谷倒计时 / 随机台词 / 图片），右键或悬停右上角打开设置菜单</i></p>
+
 ## 🐋 这是什么（项目由来）
 
 **大肥鱼桌宠** —— 社区里那只「蓝色大肥鱼」（DeepSeek 的小鲸鱼形象）被搬到了你的桌面上。
