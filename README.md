@@ -202,7 +202,7 @@ node scripts/fetch-assets.mjs --force  # 覆盖已存在的素材
 | `OPENCODE_BIN` | 自动查找 | 指定 `opencode.exe` 路径（仅在自动发现失败时需要） |
 | `WHALE_DIR` | 自动推导 | 挂件项目根目录（OpenCode 插件用；默认从插件位置上跳两级） |
 | `WHALE_LOG_DIR` | `<项目根>/logs` | 插件拉起挂件时的日志目录（默认写 `logs/widget.log`） |
-| `WHALE_DETACH` | — | 设 `1` 时挂件**脱离父进程**（OpenCode 退出后仍存活；默认不脱离，更"不像木马"） |
+| `WHALE_DETACH` | — | 设 `1` 时挂件**脱离父进程**（OpenCode 退出后仍存活；默认不脱离，更"不像木马"）。**默认行为下，OpenCode 一关，挂件也会跟着退出**（实测日志：`widget exited code=0`）—— 想让它常驻就设 `WHALE_DETACH=1` |
 | `WHALE_OPENCODE_CONFIG_DIR` | `~/.config/opencode` | OpenCode 配置目录（`setup:opencode` 登记与 `doctor` 检查用；配置目录不在默认位置时设它） |
 | `WHALE_SKIP_SETUP` | — | 设 `1` 时 `npm install` 不再自动登记 OpenCode 插件、也不补跑 Electron 二进制 |
 | `WHALE_ENSURE_TIMEOUT_MS` | `60000` | 安装期补跑 `electron/install.js` 的时间上限（毫秒） |

@@ -28,7 +28,8 @@
 | `unref()` | 无条件调用 | 仅 `detached` 时调用（否则收不到 `exit`/`error`） |
 | 启动失败 | 无感知（静默失败） | 监听 `exit` / `error` 并写日志 |
 
-> **诚实说明**：Windows 上"不 `detached`"**并不保证**父进程退出时子进程一定被杀 —— 真正的目的是**去掉特征**并**保留日志**（以前挂件起不来是静默失败，一点线索都没有）。想确保挂件在 OpenCode 退出后仍存活，设 `WHALE_DETACH=1`。
+> **诚实说明**：Windows 上"不 `detached`"**并不保证**父进程退出时子进程一定被杀 —— 真正的目的是**去掉特征**并**保留日志**（以前挂件起不来是静默失败，一点线索都没有）。
+> **实测数据点**：由脚本 / OpenCode 直接 spawn（非 detached）时，父进程树被清理后挂件确实随之退出（日志里留下 `widget exited code=0 signal=null detached=false`）—— 也就是说"**OpenCode 一关，鱼也走了**"是预期行为；想让它常驻请设 `WHALE_DETACH=1`。
 
 ### 🆕 `npm run doctor` 新增「关键文件（安全软件隔离检查）」
 
