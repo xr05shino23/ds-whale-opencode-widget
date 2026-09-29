@@ -242,6 +242,9 @@ npm install
 #   macOS/Linux:  export ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/ && npm install
 ```
 
+**改设置时报「设置保存失败: Failed to fetch」？**
+说明挂件的**本地服务没在监听**（界面能点，但所有读写请求都发不出去）。最常见的原因是启动时端口被另一个实例占用，而那个实例后来退出了。退出挂件重新启动即可；**新版会自动重试接管端口**，不需要手动处理。
+
 **同时开两个副本，第二个没反应 / 闪退？**
 本项目有**单实例锁**（防止 OpenCode 插件重复拉起）。第二个实例会**静默退出**，日志里能看到
 `[main] boot: singleInstanceLock = false`。要做对比测试时给第二个实例换一套用户数据目录：

@@ -23,14 +23,34 @@ let server = null
 let tray = null
 let boundsTimer = null
 
+let serverRetry = null
+
 async function ensureServer() {
   try {
     server = await startServer(PORT)
     console.log('[main] embedded server on', PORT)
+    if (serverRetry) { clearInterval(serverRetry); serverRetry = null }
+    return true
   } catch (err) {
-    // 端口已被占用（例如你手动跑着 npm run server）→ 复用它
+    // 端口已被占用（例如你手动跑着 npm run server，或另一个实例在跑）→ 先复用它
     console.log('[main] server not started (will reuse existing):', err && err.code, err && err.message)
+    return false
   }
+}
+
+// 端口被别人占着时我们会跳过启动（想着"复用现成的"），但那个进程如果后来退出了，
+// 我们就会变成"有窗口、没服务"的空壳：界面能点，可保存/读取全部 Failed to fetch。
+// 所以这里定期重试，一旦端口空出来就自己接管。
+function retryServerUntilOwned() {
+  if (serverRetry) return
+  serverRetry = setInterval(async () => {
+    if (server) return
+    if (await ensureServer()) {
+      console.log('[main] 端口空出来了，已接管本地服务')
+      startBridge()
+    }
+  }, 15000)
+  if (serverRetry.unref) serverRetry.unref()
 }
 
 function createWindow() {
@@ -138,7 +158,7 @@ function createTray() {
 
 app.whenReady().then(async () => {
   console.log('[main] whenReady')
-  await ensureServer()
+  if (!(await ensureServer())) retryServerUntilOwned()
   if (server) startBridge()
   createWindow()
   createTray()
