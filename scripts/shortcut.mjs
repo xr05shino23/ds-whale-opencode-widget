@@ -32,7 +32,53 @@ const ok = (m) => log('  ✓ ' + m)
 const hi = (m) => log('  ⚠ ' + m)
 const no = (m) => log('  ✗ ' + m)
 
-const LNK_NAME = '大肥鱼.lnk'
+const LNK_NAME = process.env.WHALE_SHORTCUT_NAME || 'deepseek桌宠.lnk'
+
+// 把 PNG 包成 .ico。
+// 为什么要转换：`.lnk` 的 IconLocation 只认图标资源（.ico/.exe/.dll），**给 PNG 路径它会显示一张白纸** ✗。
+// ICO 自 Vista 起支持直接内嵌 PNG 数据 → 我们只要拼个 6+16 字节的头，不需要任何图像库 ✓。
+// ⚠️ 生成的 .ico 是从上游美术素材派生的，**绝不能入库**（仓库不分发素材）→ 固定写到 data/（已被 .gitignore 忽略）
+function readPngSize(buf) {
+  // PNG: 8 字节签名 + IHDR；宽在 16、高在 20（大端 uint32）
+  if (buf.length < 24) return { w: 0, h: 0 }
+  if (!(buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47)) return { w: 0, h: 0 }
+  return { w: buf.readUInt32BE(16), h: buf.readUInt32BE(20) }
+}
+function pngToIco(pngBuf) {
+  const { w, h } = readPngSize(pngBuf)
+  const dim = (v) => (v >= 256 ? 0 : v)   // 0 表示 256
+  const header = Buffer.alloc(6)
+  header.writeUInt16LE(0, 0)              // reserved
+  header.writeUInt16LE(1, 2)              // type = icon
+  header.writeUInt16LE(1, 4)              // 只放一张图
+  const entry = Buffer.alloc(16)
+  entry.writeUInt8(dim(w || 256), 0)
+  entry.writeUInt8(dim(h || 256), 1)
+  entry.writeUInt8(0, 2)                  // 调色板数
+  entry.writeUInt8(0, 3)                  // reserved
+  entry.writeUInt16LE(1, 4)               // color planes
+  entry.writeUInt16LE(32, 6)              // bits per pixel
+  entry.writeUInt32LE(pngBuf.length, 8)   // 数据长度
+  entry.writeUInt32LE(6 + 16, 12)         // 数据偏移
+  return Buffer.concat([header, entry, pngBuf])
+}
+
+// 图标：优先用鲸鱼形象图 → 转成 .ico（放 data/，不入库）；失败则退回 Electron 自带图标
+function makeIcon(exe) {
+  const whalePng = path.join(ROOT, 'vendor', 'dsh-whale-widget', 'assets', 'DSniang1.png')
+  const icoPath = path.join(ROOT, 'data', 'whale.ico')
+  try {
+    if (!fs.existsSync(whalePng)) return { icon: exe, note: '（素材未取回，先用 Electron 图标；取回素材后重跑本脚本即可换成鲸鱼图标）' }
+    const need = !fs.existsSync(icoPath) || fs.statSync(icoPath).mtimeMs < fs.statSync(whalePng).mtimeMs
+    if (need) {
+      fs.mkdirSync(path.dirname(icoPath), { recursive: true })
+      fs.writeFileSync(icoPath, pngToIco(fs.readFileSync(whalePng)))
+    }
+    return { icon: icoPath, note: '' }
+  } catch (e) {
+    return { icon: exe, note: '（生成 .ico 失败：' + (e && e.message) + '，先用 Electron 图标）' }
+  }
+}
 
 function electronBinary() {
   const dist = path.join(ROOT, 'node_modules', 'electron', 'dist')
@@ -43,13 +89,6 @@ function electronBinary() {
   ]
   for (const p of cands) { try { if (fs.existsSync(p)) return p } catch { /* ignore */ } }
   return ''
-}
-
-// 图标：优先用鲸鱼形象图（取了素材就有），否则退回 Electron 自己的图标
-function iconPath(exe) {
-  const whale = path.join(ROOT, 'vendor', 'dsh-whale-widget', 'assets', 'DSniang1.png')
-  try { if (fs.existsSync(whale)) return whale } catch { /* ignore */ }
-  return exe
 }
 
 // 用 PowerShell 的 WScript.Shell 写 .lnk。
@@ -94,6 +133,7 @@ function main() {
     return true
   }
 
+// 删除时用同一个名字（也是从环境变量来，测试可覆盖）
   if (REMOVE) {
     const p = runPowerShell('remove', { WHALE_LNK_NAME: LNK_NAME })
     ok('已删除快捷方式：' + p)
@@ -110,13 +150,15 @@ function main() {
     return false
   }
 
+  const ic = makeIcon(exe)
   const lnk = runPowerShell('create', {
     WHALE_LNK_NAME: LNK_NAME,
     WHALE_LNK_TARGET: exe,
     WHALE_LNK_CWD: ROOT,
-    WHALE_LNK_ICON: iconPath(exe),
+    WHALE_LNK_ICON: ic.icon,
   })
   ok('已创建桌面快捷方式：' + lnk)
+  if (ic.note) hi(ic.note)
   log('    双击它即可启动挂件（不需要 OpenCode 在场）')
   log('    不想要？node scripts/shortcut.mjs --remove，或设 WHALE_NO_SHORTCUT=1 后重装')
   return true

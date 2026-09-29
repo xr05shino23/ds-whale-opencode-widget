@@ -10,7 +10,7 @@ import { fileURLToPath } from 'node:url'
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const SCRIPT = path.join(ROOT, 'scripts', 'shortcut.mjs')
-const LNK_NAME = '大肥鱼.lnk'
+const LNK_NAME = 'deepseek桌宠.lnk'
 
 const results = []
 const say = (okFlag, name, detail = '') => {
@@ -68,7 +68,21 @@ const nl = path.join(ROOT, 'node_modules', 'electron', 'dist', 'electron.exe')
     say(String(info.Target).toLowerCase() === nl.toLowerCase(), 'T1 目标 = electron.exe', info.Target)
     say(String(info.Args).trim() === '.', 'T1 参数 = "."（在当前目录启动挂件）', JSON.stringify(info.Args))
     say(path.resolve(info.Cwd).toLowerCase() === ROOT.toLowerCase(), 'T1 工作目录 = 项目根', info.Cwd)
-    say(String(info.Icon).length > 0, 'T1 设置了图标', info.Icon)
+    // 图标必须是 .ico（PNG 会让快捷方式显示一张白纸，实测踩过）
+    const whalePng = path.join(ROOT, 'vendor', 'dsh-whale-widget', 'assets', 'DSniang1.png')
+    const icon = String(info.Icon).replace(/,\s*0$/, '')
+    if (fs.existsSync(whalePng)) {
+      say(/\.ico$/i.test(icon), 'T1 图标是 .ico（不是 PNG）', info.Icon)
+      const ico = path.join(ROOT, 'data', 'whale.ico')
+      say(fs.existsSync(ico) && fs.statSync(ico).size > 100, 'T1 生成了 data/whale.ico', fs.existsSync(ico) ? fs.statSync(ico).size + ' 字节' : '-')
+      if (fs.existsSync(ico)) {
+        const b = fs.readFileSync(ico)
+        say(b.readUInt16LE(2) === 1 && b.readUInt16LE(4) === 1, 'T1 .ico 头部合法（type=1 图数=1）', b.slice(0, 4).toString('hex'))
+        say(b.includes(Buffer.from([0x89, 0x50, 0x4e, 0x47])), 'T1 .ico 内嵌 PNG 数据')
+      }
+    } else {
+      say(icon.toLowerCase() === nl.toLowerCase(), 'T1 （未取素材）图标退回 electron.exe', info.Icon)
+    }
   } else {
     say(false, 'T1 （node_modules/electron 不存在，跳过目标校验）')
   }
