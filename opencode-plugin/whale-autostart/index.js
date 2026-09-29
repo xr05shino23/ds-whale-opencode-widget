@@ -43,6 +43,10 @@ const LOG_DIR = process.env.WHALE_LOG_DIR || path.join(WHALE_DIR, 'logs')
 const LOG_FILE = path.join(LOG_DIR, 'widget.log')
 // 默认 detached（见文件头说明）：只有显式 WHALE_DETACH=0 才不脱离父进程
 const DETACH = process.env.WHALE_DETACH !== '0'
+// 「安全模式」：装了卡巴斯基等行为检测很激进的主防时，可以完全不自动拉起，
+// 改为由用户自己启动挂件 —— 那样行为链里就没有"opencode 拉起未签名大二进制"这一步，
+// 被 PDM 盯上的概率大幅下降。设置方式：WHALE_NO_AUTOSTART=1
+const NO_AUTOSTART = process.env.WHALE_NO_AUTOSTART === '1'
 
 // 插件日志：同时写插件日志文件（持久、可事后排查）与宿主 stdout（OpenCode 日志里能看到）。
 // 以前是 console 完就算了 —— 但挂件由 OpenCode 拉起时，宿主 stdout 未必有人看，
@@ -114,7 +118,11 @@ function launchWidget() {
 export default define({
   id: 'whale-autostart',
   async setup(_ctx) {
-    log('plugin loaded, widget dir = ' + WHALE_DIR + '  (detached=' + DETACH + '  log=' + LOG_FILE + ')')
+    log('plugin loaded, widget dir = ' + WHALE_DIR + '  (detached=' + DETACH + '  noAutostart=' + NO_AUTOSTART + '  log=' + LOG_FILE + ')')
+    if (NO_AUTOSTART) {
+      log('WHALE_NO_AUTOSTART=1 → 跳过自动拉起（安全模式：请自己启动挂件，例如在项目目录执行 npm start）')
+      return
+    }
     launchWidget()
   },
 })

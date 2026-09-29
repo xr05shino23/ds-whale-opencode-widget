@@ -216,6 +216,20 @@ function configTargets() {
   ]
 }
 
+// ---------------------------------------------------------------------------
+// 主防检测（不改系统、不启动任何进程，只看目录 —— 避免自己又造出一个可疑行为）
+// ---------------------------------------------------------------------------
+function detectKaspersky() {
+  const cands = [
+    path.join(process.env['ProgramFiles(x86)'] || 'C:\\Program Files (x86)', 'Kaspersky Lab'),
+    path.join(process.env.ProgramFiles || 'C:\\Program Files', 'Kaspersky Lab'),
+    path.join(process.env.ProgramData || 'C:\\ProgramData', 'Kaspersky Lab'),
+  ]
+  const hit = []
+  for (const p of cands) { try { if (fs.existsSync(p)) hit.push(p) } catch { /* ignore */ } }
+  return hit.length ? hit : null
+}
+
 function doInstall() {
   const { dir, target, state, file } = inspect()
   log('挂件插件目录: ' + PLUGIN_DIR)
@@ -333,6 +347,22 @@ function doInstall() {
   log('  · cli.json      —— 每次启动 TUI 都会加载（"一开 opencode 就有鱼"靠这条）')
   log('现在启动 OpenCode（TUI）就应该能看到挂件；想立刻验证也可以 touch 一下插件的 index.js，或 npm start')
   log('撤销：node scripts/setup-opencode.mjs --remove')
+
+  // ⚠️ 强提醒：装了卡巴斯基（或同类行为检测很激进的主防）时，务必先把排除项配好
+  const kav = detectKaspersky()
+  if (kav) {
+    log('')
+    log('⚠️⚠️  检测到卡巴斯基（' + kav[0] + '）—— 请先读 README「已知问题：安全软件误报」⚠️⚠️')
+    log('  本插件的自动拉起 = 在 opencode.exe 里 spawn 未签名的 electron.exe，')
+    log('  可能被「行为检测(PDM)」误判为木马；实测后果：项目文件被隔离、opencode.exe 被删，')
+    log('  严重时 Windows 登录会报「User Profile Service 服务登录失败」。')
+    log('  → **强烈建议先把排除项配好，再启动 OpenCode**：')
+    log('     · 排除文件夹：本仓库目录、%APPDATA%\\npm\\node_modules\\@opencode\\、%USERPROFILE%\\.cache\\opencode\\')
+    log('     · 受信任程序：opencode.exe、opencode-service-*.exe、<仓库>\\node_modules\\electron\\dist\\electron.exe')
+    log('     · 受信任程序条目里**务必勾选「不监控应用程序活动」**')
+    log('  → 不想承担这个风险：设 WHALE_NO_AUTOSTART=1（插件不再自动拉起，改为自己 npm start）')
+    log('')
+  }
   return true
 }
 

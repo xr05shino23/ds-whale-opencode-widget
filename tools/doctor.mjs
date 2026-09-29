@@ -173,7 +173,28 @@ function checkIntegrity() {
     no('OpenCode 可执行文件疑似被隔离', '命中 ' + hit + '/' + ocPaths.length + ' 处硬链接、.cache 里 ' + svcCount + ' 个 service',
       '从安全软件的「隔离区」恢复；或重装 CLI：npm i -g @opencode/cli（它与 npm 缓存里的副本是硬链接，一荣俱荣）')
   }
+  // ④ 主防检测（只看目录，不启动进程）：本项目的"自动拉起"行为链可能被行为检测误判
+  const kav = detectKaspersky()
+  if (kav) {
+    hi('检测到卡巴斯基（' + kav[0] + '）—— 请确认排除项已配好',
+      '本插件会在 opencode.exe 里拉起未签名的 electron.exe，可能被行为检测(PDM)误判为木马；实测后果包括文件被隔离、opencode.exe 被删，严重时 Windows 登录失败',
+      '先配排除项：本仓库目录 / %APPDATA%\\npm\\node_modules\\@opencode\\ / %USERPROFILE%\\.cache\\opencode\\；' +
+      '把 opencode.exe、opencode-service-*.exe、<仓库>\\node_modules\\electron\\dist\\electron.exe 加进「受信任的应用程序」' +
+      '并勾选「不监控应用程序活动」；详见 README「已知问题：安全软件误报」。不想冒险可设 WHALE_NO_AUTOSTART=1（改为自己 npm start）')
+  }
   return missing
+}
+
+// 主防检测：只看安装目录，不启动任何进程（避免自己又造出一个可疑行为）
+function detectKaspersky() {
+  const cands = [
+    path.join(process.env['ProgramFiles(x86)'] || 'C:\\Program Files (x86)', 'Kaspersky Lab'),
+    path.join(process.env.ProgramFiles || 'C:\\Program Files', 'Kaspersky Lab'),
+    path.join(process.env.ProgramData || 'C:\\ProgramData', 'Kaspersky Lab'),
+  ]
+  const hit = []
+  for (const p of cands) { try { if (fs.existsSync(p)) hit.push(p) } catch { /* ignore */ } }
+  return hit.length ? hit : null
 }
 
 // --fix：只恢复"git 跟踪的"关键文件 —— 逐条确认被跟踪才动手，

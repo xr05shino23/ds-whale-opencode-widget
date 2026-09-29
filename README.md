@@ -3,6 +3,19 @@
 > **非官方**的「小鲸鱼余额挂件」**桌面版（Electron）** + **OpenCode 适配**。
 > Unofficial desktop (Electron) + OpenCode port of the [DSH Whale Balance Widget](https://github.com/MeteorNOX/DeepSeek-Balance-Whale-Widget).
 
+> ## ⚠️ 装了卡巴斯基（或同类主防）请先看这条
+>
+> 本插件会在 **`opencode.exe`** 里**自动拉起一个未签名的 `electron.exe`**。这个行为链**可能被卡巴斯基的行为检测（PDM）误判为木马** `PDM:Trojan.Win32.Generic` —— 本机实测过一次，后果是：项目文件被隔离、`opencode.exe` 被删，**严重时 Windows 登录会报「User Profile Service 服务登录失败，无法加载用户配置文件」** ✗
+>
+> **请务必先配好排除项，再让 OpenCode 启动挂件**（完整清单见「[已知问题：安全软件误报](#-已知问题安全软件误报请先读这条)」）：
+> - 排除文件夹：本仓库目录 · `%APPDATA%\npm\node_modules\@opencode\` · `%USERPROFILE%\.cache\opencode\`
+> - 受信任的应用程序：`opencode.exe` · `opencode-service-*.exe` · `<仓库>\node_modules\electron\dist\electron.exe`
+> - 受信任程序条目里**务必勾选「不监控应用程序活动」** —— 这是挡住 PDM 的关键，不勾等于没加
+>
+> **不想承担这个风险？** 设环境变量 **`WHALE_NO_AUTOSTART=1`** → 插件**完全不自动拉起**，挂件改由你自己启动（`npm start`）。这样行为链里就没有"跨进程拉起未签名大二进制"这一步，被 PDM 盯上的概率大幅下降 ✓
+>
+> 跑 `npm run doctor` 可以检查：它**能检测到卡巴斯基**并把上面这份清单再打印一遍 ✓
+
 <p align="center">
   <img src="docs/images/whale-bubble.png" alt="小鲸鱼挂件运行截图" width="300">
 </p>
@@ -203,6 +216,7 @@ node scripts/fetch-assets.mjs --force  # 覆盖已存在的素材
 | `WHALE_DIR` | 自动推导 | 挂件项目根目录（OpenCode 插件用；默认从插件位置上跳两级） |
 | `WHALE_LOG_DIR` | `<项目根>/logs` | 插件拉起挂件时的日志目录（默认写 `logs/widget.log`） |
 | `WHALE_DETACH` | 脱离父进程（默认**开**） | 设 `0` 时挂件不脱离父进程。**默认开是有原因的**：OpenCode 会在多个进程里加载插件（服务端 / TUI / 每次 CLI 调用），不脱离父进程的话，**那个进程一退出鱼就被一起带走**，而且不会自动回来（实测踩过）。想换回非 detached 就设 `WHALE_DETACH=0` |
+| `WHALE_NO_AUTOSTART` | — | 设 `1` → 插件**完全不自动拉起**（"安全模式"）。装了卡巴斯基等主防、又不想承担误判风险时用：挂件改由你自己 `npm start` 启动，行为链里就没有"跨进程拉起未签名大二进制"这一步了 |
 | `WHALE_OPENCODE_CONFIG_DIR` | `~/.config/opencode` | OpenCode 配置目录（`setup:opencode` 登记与 `doctor` 检查用；配置目录不在默认位置时设它） |
 | `WHALE_SKIP_SETUP` | — | 设 `1` 时 `npm install` 不再自动登记 OpenCode 插件、也不补跑 Electron 二进制 |
 | `WHALE_ENSURE_TIMEOUT_MS` | `60000` | 安装期补跑 `electron/install.js` 的时间上限（毫秒） |
@@ -289,6 +303,7 @@ npm run doctor -- --fix     # 自动 git restore 恢复（只动 git 跟踪的�
 ## 🧭 已知限制
 
 - **平台**：目前只在 **Windows** 上实测过（作者环境：Windows 10 22H2 / 2560×1440 / 100% 缩放）。macOS / Linux 未验证 —— 代码里已做跨平台处理（Electron 可执行文件路径、端口、路径推导），欢迎 PR 或反馈。
+- **桌面版 / Web 版客户端**：插件加载点与 TUI 不同 —— 官方文档写明 `cli.json` 只作用于**终端客户端**，所以桌面版用户只会在 **OpenCode 服务启动**时被拉起（**不会**在每次打开桌面版时触发；作者本机没装桌面版，未实测）。需要时用 `npm start` 手动起，或 `opencode service restart`。
 - **Electron 版本**：实测版本 **44.4.5**（`npm install` 默认装的就是它）。挂件只用到很基础的 Electron API，理论上多数版本都能跑；若最新版在你的机器上有异常，可自行换到仍在[官方支持窗口](https://www.electronjs.org/docs/latest/tutorial/electron-timelines)内的版本，例如 `npm i -D electron@42.11.8`。
 - **OpenCode 版本**：作者只在 **OpenCode TUI（CLI）** 上实测过。按[官方文档](https://opencode.ai/v2/docs/cli/web/)，**Web UI / 桌面 App 与 TUI 由同一个服务提供**（默认 `127.0.0.1:49374`，仅监听本机）—— 而本插件的用量桥连的正是**那个服务**，因此三种客户端应当都能直接工作。如果你用的是**独立服务器**（`opencode serve` 或自定义端口），用环境变量 `WHALE_OPENCODE_URL=http://127.0.0.1:<端口>` 指定即可。
 - **DSH 专属能力在 OpenCode 环境下不可用**：DSH 账号登录态查余额、提问/授权提示音与提示泡泡、`{session}` 对话名（会回落成「当前对话」）。

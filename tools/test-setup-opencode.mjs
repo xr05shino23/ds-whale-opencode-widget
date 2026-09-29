@@ -76,7 +76,8 @@ const autoTarget = (cfg) => path.join(cfg, 'plugins', 'whale-autostart')
   say(fs.existsSync(path.join(t, 'index.js')) && fs.existsSync(path.join(t, 'package.json')), 'T2 复制内容完整')
   say(!pluginsOf(cfg) || pluginsOf(cfg).length === 0, 'T2 此时没有往配置里塞条目（走的是②）')
   const again = run([], { WHALE_OPENCODE_CONFIG_DIR: cfg, WHALE_SETUP_FORCE: 'copy' })
-  say(!/失败/.test(again), 'T2 幂等：重复运行不报失败')
+  // 判据用脚本真正的失败标记「✗ 」（注意别拿"失败"二字当判据 —— 卡巴斯基警告文本里就有"服务登录失败"）
+  say(!/✗ /.test(again), 'T2 幂等：重复运行不报失败')
   fs.rmSync(cfg, { recursive: true, force: true })
 }
 
@@ -185,7 +186,7 @@ const autoTarget = (cfg) => path.join(cfg, 'plugins', 'whale-autostart')
 // ---------------------------------------------------------------------------
 {
   const out = run(['--soft'], { WHALE_OPENCODE_CONFIG_DIR: path.join(os.tmpdir(), 'no-such-parent-' + Date.now(), 'deep', 'oc') })
-  say(!/失败/.test(out) || /继续/.test(out), 'T6 --soft 失败也只警告、不报错')
+  say(!/✗ /.test(out) || /继续/.test(out), 'T6 --soft 失败也只警告、不报错')
 }
 
 // ---------------------------------------------------------------------------
