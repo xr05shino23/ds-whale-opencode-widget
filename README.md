@@ -56,6 +56,21 @@
 > 上游署名与逐条改动 → **[`NOTICE.md`](NOTICE.md)**
 > 每个版本修了什么 bug、做了什么调整（现象 / 根因 / 修法 / 验证）→ **[`CHANGELOG.md`](CHANGELOG.md)**
 
+## 🎯 它怎么用，哪些功能依赖 OpenCode
+
+**它可以当独立的桌面挂件用。** 打开就完事，不需要 OpenCode 在旁边跑 —— 你在用别的 agent（Claude Code、Codex、Cursor……随便什么）的时候，它照样能把**余额、今日已用、峰谷倒计时**显示在桌面右下角。
+
+**「适配 OpenCode」指的是与 agent 联动的那部分**，只有 OpenCode 环境才有：
+
+| 功能 | 需要 OpenCode 吗 |
+|---|---|
+| 余额查询 · 今日已用 · 峰谷定价与倒计时 · 账本 | ❌ 不需要。不装 OpenCode 也能用，换哪个 agent 都不影响 |
+| **「每轮对话消耗」提示**（响一声 + 弹金额） | ✅ 需要。数据来自 OpenCode 的会话记录 |
+| **随 OpenCode 服务启动自动拉起** | ✅ 需要。靠仓库自带的 OpenCode 插件 |
+
+> **如果你是 DSH 用户、又没有桌面挂件的需求**，直接用上游原版更合适：[MeteorNOX/DeepSeek-Balance-Whale-Widget](https://github.com/MeteorNOX/DeepSeek-Balance-Whale-Widget)。
+> 它在 DSH 网页里的能力比本版完整 —— 账号登录态查余额、提问/授权提示音、`{session}` 对话名这些都在，而本版为了搬到桌面**放弃了这部分**（详见「[已知限制](#-已知限制)」）。
+
 ## ✨ 主要特性
 
 把原本挂在 DSH 网页右下角的小鲸鱼，做成了一个**桌面常驻挂件**：
