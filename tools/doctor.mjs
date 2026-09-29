@@ -337,40 +337,36 @@ function checkOpenCode() {
   } catch { /* 不存在 */ }
 
   let viaConfig = false
-  // 两个登记点，触发时机不同（互补）：
-  //   opencode.json → 后台服务启动时加载；cli.json → 每次启动 TUI 都会加载
-  const hasIn = (names) => names.some((n) => {
+  for (const n of ['opencode.json', 'opencode.jsonc']) {
     const p = path.join(cfgDir, n)
-    try { return norm(fs.readFileSync(p, 'utf8')).includes(want) } catch { return false }
-  })
-  const viaDoc = hasIn(['opencode.json', 'opencode.jsonc'])
-  const viaCli = hasIn(['cli.json'])
-  viaConfig = viaDoc || viaCli
+    if (!fs.existsSync(p)) continue
+    try { if (norm(fs.readFileSync(p, 'utf8')).includes(want)) { viaConfig = true; break } } catch { /* ignore */ }
+  }
+  // 顺带查一下 cli.json 里有没有那条"无效登记"（实测：cli.json 只对带 TUI 入口的插件生效）
+  let staleCli = false
+  try { staleCli = norm(fs.readFileSync(path.join(cfgDir, 'cli.json'), 'utf8')).includes(want) } catch { /* ignore */ }
 
-  if (viaDoc && viaCli && (viaAuto || viaCopy)) {
-    ok('插件已登记（opencode.json + cli.json）', '服务启动 ✓ 与 TUI 启动 ✓ 都会拉起')
+  if (viaConfig && (viaAuto || viaCopy)) {
+    ok('插件已登记（opencode.json 的 plugins 数组）')
     hi('自动发现目录里也有一份', autoDetail,
-      '多余的一份：npm run setup:opencode -- --migrate 可清掉（不会双开，只是多一次无用启动）')
-  } else if (viaDoc && viaCli) {
-    ok('插件已登记（opencode.json + cli.json）', '服务启动 ✓ 与 TUI 启动 ✓ 两种时机都会拉起')
-  } else if (viaDoc) {
-    ok('插件已登记（opencode.json）', 'OpenCode 后台服务启动时会拉起')
-    hi('cli.json 里还没登记', '只重开 TUI 时不会触发拉起（"重开 opencode 没见到鱼"多半就是这个）',
-      'npm run setup:opencode   （补上 cli.json，做到"每次开 TUI 就有鱼"）')
-  } else if (viaCli) {
-    ok('插件已登记（cli.json）', '每次启动 TUI 都会拉起')
-    hi('opencode.json 里还没登记', '后台服务单独启动时不会拉起（影响不大，TUI 那条已覆盖）',
-      'npm run setup:opencode')
+      '多余的：npm run setup:opencode -- --migrate 可清掉（不会双开，只是多一次无用启动）')
+  } else if (viaConfig) {
+    ok('插件已登记（opencode.json 的 plugins 数组）', 'OpenCode 后台服务启动时会加载它')
+    note('TUI 启动不会触发自动拉起（实测：cli.json 只对带 TUI 入口的插件生效）—— 想随时见到鱼：双击项目根目录的「启动大肥鱼.cmd」，或 npm start')
   } else if (viaAuto) {
     hi('自动发现目录里是"目录链接" —— 全新启动时会被跳过', autoDetail,
-      'npm run setup:opencode   （改成写 opencode.json + cli.json）')
+      'npm run setup:opencode   （改成写 opencode.json）')
   } else if (viaCopy) {
     ok('插件已登记（自动发现目录 · 副本）', autoDetail)
-    hi('副本不随仓库更新', '改了代码或升级版本后，副本还是旧的',
-      'npm run setup:opencode   （会改成写 opencode.json + cli.json）')
+    hi('副本不随仓库更新', '改了代码或升级版本后，副本还是旧的', 'npm run setup:opencode')
   } else {
     no('插件尚未登记', 'OpenCode 启动时不会自动拉起挂件',
       'npm run setup:opencode   （或看 npm run setup:opencode -- --dry-run 先预览）')
+  }
+
+  if (staleCli) {
+    hi('cli.json 里还留着一份无效登记', 'cli.json 只对"带 TUI 入口"的插件生效，我们这条不会被 TUI 加载（实测）',
+      'npm run setup:opencode   （会自动清掉它）')
   }
 }
 

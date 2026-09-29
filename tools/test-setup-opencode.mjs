@@ -34,15 +34,15 @@ function run(args = [], env = {}) {
 }
 
 const freshDir = () => fs.mkdtempSync(path.join(os.tmpdir(), 'whale-setup-test-'))
-// 登记会同时写两个文件：opencode.json（服务端）与 cli.json（TUI 每次启动）
+// 登记只写一个文件：opencode.json（cli.json 那条已实测无效 —— cli.json 只对"带 TUI 入口"的插件生效）
 const readCfg = (cfg, name = 'opencode.json') => {
   const f = path.join(cfg, name)
   try { return fs.readFileSync(f, 'utf8').replace(/^\uFEFF/, '') } catch { return '' }
 }
 const pluginsOf = (cfg, name = 'opencode.json') => { try { return JSON.parse(readCfg(cfg, name)).plugins } catch { return null } }
-const bothRegistered = (cfg) => {
+const registered = (cfg) => {
   const want = path.join(PLUGIN).split(path.sep).join('/')
-  return (pluginsOf(cfg, 'opencode.json') || []).includes(want) && (pluginsOf(cfg, 'cli.json') || []).includes(want)
+  return (pluginsOf(cfg) || []).includes(want)
 }
 const autoTarget = (cfg) => path.join(cfg, 'plugins', 'whale-autostart')
 
@@ -52,14 +52,14 @@ const autoTarget = (cfg) => path.join(cfg, 'plugins', 'whale-autostart')
 {
   const cfg = freshDir()
   const out = run([], { WHALE_OPENCODE_CONFIG_DIR: cfg })
-  say(bothRegistered(cfg), 'T1 默认：opencode.json + cli.json 都登记了',
-    'opencode.json=' + JSON.stringify(pluginsOf(cfg)) + ' cli.json=' + JSON.stringify(pluginsOf(cfg, 'cli.json')))
+  say(registered(cfg), 'T1 默认：路径写进了 opencode.json 的 plugins 数组', JSON.stringify(pluginsOf(cfg)))
   say(/已更新/.test(out) && /插入 plugins 条目/.test(out), 'T1 输出了"插入 plugins 条目"')
   say(!fs.existsSync(autoTarget(cfg)), 'T1 没有在自动发现目录里留链接/副本（不需要）')
+  say(/TUI 启动不会触发自动拉起/.test(out), 'T1 诚实告知"TUI 启动不会触发"（实测结论）')
 
   const again = run([], { WHALE_OPENCODE_CONFIG_DIR: cfg })
   say(/已就绪/.test(again), 'T1 幂等：第二次运行识别为已就绪')
-  say((pluginsOf(cfg) || []).length === 1 && (pluginsOf(cfg, 'cli.json') || []).length === 1, 'T1 幂等：两个文件里都没有重复条目')
+  say((pluginsOf(cfg) || []).length === 1, 'T1 幂等：没有重复条目')
   say(!fs.existsSync(autoTarget(cfg)), 'T1 幂等：仍然没有多出副本')
   fs.rmSync(cfg, { recursive: true, force: true })
 }
@@ -142,23 +142,23 @@ const autoTarget = (cfg) => path.join(cfg, 'plugins', 'whale-autostart')
   say(fs.existsSync(autoTarget(cfg)), 'T4 前置：副本已创建')
   run(['--remove'], { WHALE_OPENCODE_CONFIG_DIR: cfg })
   say(!fs.existsSync(autoTarget(cfg)), 'T4 --remove 删掉了副本')
-  say((pluginsOf(cfg) || []).length === 0 && (pluginsOf(cfg, 'cli.json') || []).length === 0, 'T4 两个配置文件里的条目都摘掉了')
+  say((pluginsOf(cfg) || []).length === 0, 'T4 配置里的条目也摘掉了')
   fs.rmSync(cfg, { recursive: true, force: true })
 }
 
 // ---------------------------------------------------------------------------
-// T10 只缺 cli.json 时（旧版只登记过 opencode.json）→ 补上那一个，不动已有的
+// T10 清理历史遗留：cli.json 里那条"无效登记"要被清掉（实测它不会被 TUI 加载）
 // ---------------------------------------------------------------------------
 {
   const cfg = freshDir()
   const want = PLUGIN.split(path.sep).join('/')
   fs.mkdirSync(cfg, { recursive: true })
-  fs.writeFileSync(path.join(cfg, 'opencode.json'), JSON.stringify({ plugins: [want] }, null, 2))
-  say((pluginsOf(cfg, 'cli.json') || null) === null, 'T10 前置：还没有 cli.json')
+  fs.writeFileSync(path.join(cfg, 'cli.json'), JSON.stringify({ plugins: [want, 'some-other-plugin'] }, null, 2))
   const out = run([], { WHALE_OPENCODE_CONFIG_DIR: cfg })
-  say((pluginsOf(cfg, 'cli.json') || []).includes(want), 'T10 cli.json 被补上了（TUI 启动也能拉起）')
-  say(/部分已登记/.test(out), 'T10 并说明是"补上缺的那个"')
-  say((pluginsOf(cfg) || []).length === 1, 'T10 opencode.json 里没有重复', JSON.stringify(pluginsOf(cfg)))
+  const left = pluginsOf(cfg, 'cli.json') || []
+  say(!left.includes(want), 'T10 cli.json 里我们的那条被清掉了', JSON.stringify(left))
+  say(left.includes('some-other-plugin'), 'T10 别人的条目保留')
+  say(/清理 cli.json 里那条无效登记/.test(out), 'T10 并说明了为什么清理')
   fs.rmSync(cfg, { recursive: true, force: true })
 }
 

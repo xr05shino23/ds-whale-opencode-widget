@@ -207,13 +207,31 @@ function inspect() {
   return { dir, target, state: linkState(target), file: configFile(dir) }
 }
 
-// 登记目标：两个文件，职责不同、互补（详见 doInstall 里的注释）
+// 登记目标：opencode.json（服务端插件的加载点）
+// ⚠️ 为什么**不**写 cli.json：实测（2026-09-30）表明 cli.json 只对"**带 TUI 入口**"的插件生效 ——
+// 我们这种"只做事、没有 TUI 组件"的插件列进去**不会被 TUI 加载**（TUI 启动时日志里没有任何 loading plugin）。
+// 所以"启动 TUI 就自动拉起"在当前 OpenCode 插件模型下做不到；可靠办法是手动/启动器（见 README），
+// 或者给插件实现 TUI 入口（官方 build 文档本机打不开，暂未实现）。
 function configTargets() {
   const dir = configDir()
   return [
     { file: path.join(dir, 'opencode.json'), why: '服务端插件（后台服务启动时加载）' },
-    { file: path.join(dir, 'cli.json'), why: 'CLI/TUI 插件（每次启动 TUI 都会加载）' },
   ]
+}
+
+// 清理历史遗留：v0.1.4 早期版本往 cli.json 写过一条（那条其实不生效）
+function cleanLegacyCliEntry() {
+  const cli = path.join(configDir(), 'cli.json')
+  if (!fs.existsSync(cli)) return
+  if (!configHasEntry(cli, posix(PLUGIN_DIR))) return
+  try {
+    const nxt = removeEntry(readConfig(cli), posix(PLUGIN_DIR))
+    if (nxt === null) return
+    hi('清理 cli.json 里那条无效登记 —— 实测它不会被 TUI 加载（cli.json 只对带 TUI 入口的插件生效）')
+    writeConfig(cli, nxt, '移除无效的 plugins 条目')
+  } catch (e) {
+    hi('清理 cli.json 失败（' + (e && e.message) + '）')
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -251,53 +269,32 @@ function doInstall() {
     if (!DRY) { try { fs.rmSync(target, { force: true }) } catch { /* ignore */ } }
   }
 
-  // —— 登记到哪里（两个文件，职责不同，互补）——
-  //   opencode.json → 服务端插件的加载点：OpenCode **后台服务**启动时跑一次
-  //   cli.json      → CLI/TUI 专用插件的加载点：**每次启动 TUI 都会跑一次** ← 用户真正期望的时机
-  //   （实测：只写 opencode.json 时，重开 TUI 不会触发；两个都写才能"启动 opencode 就见到鱼"）
-  //   两处同时加载不会双开 —— Electron 有单实例锁，后来的会自己退出。
-  const CONFIG_TARGETS = configTargets()
-
+  // —— 登记（只写一个地方；cli.json 那条已实测无效，见 configTargets 的注释）——
   let via = ''
   let alreadyOk = false
 
   if (FORCE === 'copy') {
     hi('（WHALE_SETUP_FORCE=copy）强制走"复制到自动发现目录"')
     via = 'copy'
+  } else if (configHasEntry(configTargets()[0].file, posix(PLUGIN_DIR))) {
+    ok('已就绪（opencode.json 的 plugins 数组已登记）')
+    alreadyOk = true
   } else {
-    const missing = CONFIG_TARGETS.filter((t) => !configHasEntry(t.file, posix(PLUGIN_DIR)))
-    if (!missing.length) {
-      ok('已就绪（opencode.json + cli.json 都已登记）')
-      alreadyOk = true
-    } else {
-      if (missing.length < CONFIG_TARGETS.length) hi('部分已登记，缺的补上：' + missing.map((t) => path.basename(t.file)).join('、'))
-      via = 'config'
-    }
+    via = 'config'   // 首选写配置；写失败会自动退回"复制"（见下面 try/catch）
   }
 
-  // ① 首选：写进两个配置文件的 plugins 数组（各自动备份；缺哪个补哪个）
+  // ① 首选：写进 opencode.json 的 plugins 数组（改前自动备份）
   let viaConfig = false
   if (!alreadyOk && via === 'config') {
-    let anyOk = false
-    let anyFail = false
-    for (const t of CONFIG_TARGETS) {
-      if (configHasEntry(t.file, posix(PLUGIN_DIR))) { ok('已登记：' + path.basename(t.file) + '（' + t.why + '）'); anyOk = true; continue }
-      try {
-        fs.mkdirSync(path.dirname(t.file), { recursive: true })   // 配置目录可能还不存在（首次新建）
-        const text = readConfig(t.file) || '{\n}\n'
-        writeConfig(t.file, insertEntry(text, JSON.stringify(posix(PLUGIN_DIR))), '插入 plugins 条目 —— ' + t.why)
-        anyOk = true
-      } catch (e) {
-        anyFail = true
-        hi('写 ' + path.basename(t.file) + ' 失败（' + (e && e.message) + '）')
-      }
-    }
-    if (!anyOk) {
-      hi('两个配置文件都写不成 → 退回：复制到自动发现目录')
-      via = 'copy'
-    } else {
+    const t = configTargets()[0]
+    try {
+      fs.mkdirSync(path.dirname(t.file), { recursive: true })   // 配置目录可能还不存在（首次新建）
+      const text = readConfig(t.file) || '{\n}\n'
+      writeConfig(t.file, insertEntry(text, JSON.stringify(posix(PLUGIN_DIR))), '插入 plugins 条目 —— ' + t.why)
       viaConfig = true
-      if (anyFail) hi('有一个文件没写成 —— 另一个已生效（两种触发时机互补，先能用）')
+    } catch (e) {
+      hi('写配置失败（' + (e && e.message) + '）→ 退回：复制到自动发现目录')
+      via = 'copy'
     }
   }
 
@@ -342,11 +339,12 @@ function doInstall() {
   }
 
   log('')
-  log('完成 ✅  已登记到两个地方（互补）：')
-  log('  · opencode.json —— OpenCode 后台服务启动时加载（挂件随服务被拉起）')
-  log('  · cli.json      —— 每次启动 TUI 都会加载（"一开 opencode 就有鱼"靠这条）')
-  log('现在启动 OpenCode（TUI）就应该能看到挂件；想立刻验证也可以 touch 一下插件的 index.js，或 npm start')
+  log('完成 ✅  已登记到 opencode.json（OpenCode 后台服务启动时会加载它）')
+  log('⚠️ 注意：**TUI 启动不会触发自动拉起**（实测：cli.json 只对"带 TUI 入口"的插件生效，我们这条不属于）')
+  log('   想随时见到鱼：双击项目根目录的「启动大肥鱼.cmd」，或执行 npm start')
   log('撤销：node scripts/setup-opencode.mjs --remove')
+
+  cleanLegacyCliEntry()
 
   // ⚠️ 强提醒：装了卡巴斯基（或同类行为检测很激进的主防）时，务必先把排除项配好
   const kav = detectKaspersky()
@@ -394,6 +392,7 @@ function doRemove() {
   log('')
   if (!touched) log('没有需要撤销的内容。')
   else log('已撤销 ✅  重启 OpenCode 后不再自动拉起挂件。')
+  cleanLegacyCliEntry()
   return true
 }
 
